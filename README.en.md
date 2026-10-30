@@ -9,52 +9,52 @@
 
 # SimpleBCM
 
-**Restore Broadcom Wi-Fi support on macOS Tahoe**
+**Restore Broadcom Wi-Fi support on macOS Sequoia and Tahoe**
 
 ![Version](https://img.shields.io/badge/version-1.0.0-2563eb)
-![macOS](https://img.shields.io/badge/macOS-Tahoe%2026-111827)
+![macOS](https://img.shields.io/badge/macOS-Sequoia%2015%20%7C%20Tahoe%2026-111827)
 ![Architecture](https://img.shields.io/badge/arch-x86__64-6b7280)
 ![OpenCore](https://img.shields.io/badge/boot-OpenCore-16a34a)
 
 [简体中文](README.md) · **English**
 
-OpenCore injection · Native wireless APIs · Auto-join · AirDrop
+OpenCore injection · Native wireless APIs · Sequoia / Tahoe
 
 </div>
 
 ---
 
-SimpleBCM is a Lilu plug-in that adapts the wireless control and event interfaces of companion Broadcom drivers to Tahoe. Each driver loads separately through OpenCore. It does not modify the system volume or replace system frameworks.
+SimpleBCM is a Lilu plug-in that adapts the wireless control and event interfaces of companion Broadcom drivers to Sequoia and Tahoe. Each driver loads separately through OpenCore. It does not modify the system volume or replace system frameworks.
 
 ## Requirements
 
 | Item | Requirement |
 | :--- | :--- |
-| System | All macOS Tahoe releases (Darwin 25.x) |
+| System | macOS Sequoia / Tahoe (Darwin 24.x / 25.x) |
 | Architecture | Intel x86_64 |
 | Bootloader | OpenCore |
 | Dependencies | Lilu ≥ 1.7.1 and the pinned companion drivers in the package |
 
 ## Installation
 
-1. Extract the package and copy the drivers from `EFI/OC/Kexts` into an EFI copy you can roll back. Keep exactly one enabled Lilu version.
-2. Merge `config.fragment.plist`. Load in this order: **Lilu → SimpleBCM → IOSkywalkFamily → IO80211FamilyLegacy → AirPortBrcmNIC-Tahoe**.
+1. Choose the RELEASE package for your OS for daily use, or DEBUG for troubleshooting. Extract it and copy the drivers from `EFI/OC/Kexts` into an EFI copy you can roll back. Keep exactly one enabled Lilu version.
+2. Merge `config.fragment.plist`. Load in this order: **Lilu → SimpleBCM → IOSkywalkFamily → IO80211FamilyLegacy → AirPortBrcmNIC for the selected OS**.
 3. Add a `Kernel → Block → Exclude` entry for the system `com.apple.iokit.IOSkywalkFamily`. The configuration example includes this setting.
 4. Run `Extra/Tools/preflight.py`, then validate the complete configuration with `ocvalidate` from your OpenCore version.
 5. Boot from that EFI and connect using the system Wi-Fi interface.
 
 Only some older cards, such as BCM943224, need AirportBrcmFixup and its NIC Injector. Copy `Extra/Optional/AirportBrcmFixup.kext` to `EFI/OC/Kexts`, then use `Extra/Optional/config.AirportBrcmFixup.fragment.plist` or append `--airportbrcmfixup` to the configuration command. The optional example loads AirportBrcmFixup after SimpleBCM and adds the `AirPortBrcmNIC_Injector` entry.
 
-The old AirPort plug-in inside IO80211FamilyLegacy and the standalone Tahoe AirPort driver must not both be enabled. The package removes the old plug-in. Each driver loads separately. To upgrade, copy `EFI/OC/Kexts` and regenerate the configuration. Use Release for daily use or replace SimpleBCM with `Debug/SimpleBCM.kext` for troubleshooting.
+Sequoia and Tahoe packages of the same build type contain byte-identical SimpleBCM.kext binaries. SimpleBCM always supports both operating systems. Each package includes only its matching AirPort backend: Sequoia uses `IO80211FamilyLegacy.kext/Contents/PlugIns/AirPortBrcmNIC.kext`; Tahoe uses `AirPortBrcmNIC-Tahoe.kext`. Retain the Legacy PlugIns directory from the Sequoia package.
+
+Each configuration example targets its package's OS. For a dual-boot EFI, install both sets of companion drivers and keep one copy of SimpleBCM and shared drivers. Configuration migration preserves existing entries for the other OS.
 
 The package root contains:
 
 ```text
-EFI/                    Companion drivers and Release SimpleBCM
-Debug/SimpleBCM.kext     Debug build
-Release/SimpleBCM.kext   Release build
-config.fragment.plist   Default configuration example
-Extra/                  Documentation, tools, sources, symbols, reports, optional drivers
+EFI/                    OS-specific companion drivers and the selected SimpleBCM build
+config.fragment.plist   Configuration for the selected OS
+Extra/                  Documentation, tools, matching symbols, reports, optional drivers
 ```
 
 <details>
@@ -66,13 +66,13 @@ Run from the extracted package directory:
 python3 Extra/Tools/configure.py /Volumes/USB/EFI/OC/config.plist --output /Volumes/USB/EFI/OC/config.SimpleBCM.plist
 ```
 
-The generator requires exactly one enabled Lilu entry and writes a separate configuration copy. It adds the individual driver entries, handles duplicate entries from older configurations, and preserves existing boot arguments. For older cards, append `--airportbrcmfixup`; an existing AirportBrcmFixup entry enabled for Tahoe is preserved automatically. Review the copy, use it as the USB EFI's `config.plist`, then run:
+The generator requires exactly one enabled Lilu entry and writes a separate configuration copy. It adds the individual driver entries, handles duplicate entries from older configurations, and preserves existing boot arguments. For older cards, append `--airportbrcmfixup`. Packaged tools select the OS from the manifest and preserve the other OS configuration. When running from source, use `--system Sequoia` or `--system Tahoe`; omitting the option generates a dual-system configuration. Review the copy, use it as the USB EFI's `config.plist`, then run:
 
 ```sh
 python3 Extra/Tools/preflight.py /Volumes/USB/EFI/OC --manifest Extra/manifest.json
 ```
 
-Preflight checks the Tahoe kernel range, load order, minimum Lilu version, duplicate or conflicting drivers, and actual files. `--manifest` also checks file hashes for SimpleBCM, its companion drivers, and an enabled optional AirportBrcmFixup. You can retain your existing Lilu ≥ 1.7.1. Runtime loading is not restricted by OS minor version, build number, or UUID.
+Preflight checks the target kernel range, load order, minimum Lilu version, duplicate or conflicting drivers, and actual files. `--manifest` also checks file hashes for SimpleBCM, its companion drivers, and an enabled optional AirportBrcmFixup. You can retain your existing Lilu ≥ 1.7.1. Use `--target-volume "/Volumes/Macintosh HD 1"` to inspect an offline system volume; the default checks the running system. Runtime selection uses the Darwin major version and validates payload bytes.
 
 </details>
 
@@ -94,7 +94,7 @@ python3 Extra/Tools/collect.py
 
 By default, `Extra/bcmprobe` queries CoreWLAN and IORegistry without printing SSIDs, BSSIDs, or passwords. `./Extra/bcmprobe --scan` actively starts a scan. The collector saves driver, client, awdl0, and related system log information on demand, with no persistent listener.
 
-`PatchState=7` and `Status=ReadyForHardwareValidation` indicate that interface hooks are installed. Confirm connectivity through actual use. `Commands`, `Events`, `Notifications`, `LastRequest`, and `LastResult` retain real counts and return codes.
+`ActiveABI` identifies Sequoia/Tahoe; `AirPortBackend` identifies Original/Tahoe. `PatchState=7` and `Status=ReadyForHardwareValidation` indicate that interface hooks are installed. Confirm connectivity through actual use. `Commands`, `Events`, `Notifications`, `LastRequest`, and `LastResult` retain real counts and return codes.
 
 ## Building
 
@@ -106,10 +106,6 @@ python3 Tools/build.py --configuration Release
 python3 Tools/build.py --configuration Release --analyze
 python3 Tools/package.py
 ```
-
-The output is `dist/SimpleBCM-1.0.0-Tahoe-x86_64.zip`. Builds verify pinned upstream dependencies; the included validation reports record the actual test environment. All Tahoe releases are allowed without minor-version gates. The current 1.0.0 build still requires a reboot test, so this does not imply that every release has been validated.
-
-CI follows the SimpleHDA build-and-publish flow on `macos-26-intel`: branch pushes build Debug/Release, run static analysis and validation, and update the `v1.0.0-alpha` prerelease. Pull requests build without publishing. Formal Release tags must be `1.0.0` or `v1.0.0`. Alpha archive names include the short commit SHA; formal archives retain the name above. CI system-interface validation does not replace a hardware reboot test.
 
 ## Credits
 

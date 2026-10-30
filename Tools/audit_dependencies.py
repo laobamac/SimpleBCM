@@ -7,18 +7,21 @@
 #  Copyright © 2026 laobamac. All rights reserved.
 #
 
+import argparse
+import hashlib
 import json
+import plistlib
 import struct
 import subprocess
 from pathlib import Path
 
 from bootstrap import validate_payloads
 from macho import Image
+from kernel_collection import KernelCollection
 from profiles import IMAGES, relocations
 
 
 ROOT = Path(__file__).resolve().parent.parent
-KERNEL = Path("/System/Library/KernelCollections/BootKernelExtensions.kc")
 
 
 def nm(path, *options):
@@ -30,14 +33,25 @@ def require(condition, detail):
         raise RuntimeError(detail)
 
 
-def audit(configuration):
+def audit(configuration, volume=Path('/'), output=None):
     validate_payloads()
-    paths = dict(IMAGES)
+    collection = KernelCollection(Path(volume) / 'System/Library/KernelCollections/BootKernelExtensions.kc')
+    running = int(collection.version().split('.')[0])
+    require(running in (24, 25), 'Unsupported target kernel')
+    paths = {name: path for name, path in IMAGES.items() if name != 'AirPortSequoia'}
+    if running == 24:
+        paths['AirPort'] = IMAGES['AirPortSequoia']
     paths["AirportBrcmFixup"] = ROOT / ".research/binaries/AirportBrcmFixup-v2.2.1-RELEASE/AirportBrcmFixup.kext/Contents/MacOS/AirportBrcmFixup"
     paths["Lilu"] = ROOT / "build/Lilu/Release/Lilu.kext/Contents/MacOS/Lilu"
     paths["SimpleBCM"] = ROOT / f"build/DerivedData/Build/Products/{configuration}/SimpleBCM.kext/Contents/MacOS/SimpleBCM"
     images = {name: Image(path) for name, path in paths.items()}
-    available = set(nm(KERNEL, "-g", "-j", "-U"))
+    providers = {'com.apple.kernel'}
+    for path in paths.values():
+        libraries = plistlib.loads((path.parent.parent / 'Info.plist').read_bytes())['OSBundleLibraries']
+        providers.update(name for name in libraries if name in collection.images and
+                         name not in ('com.apple.iokit.IO80211Family', 'com.apple.iokit.IOSkywalkFamily',
+                                      'com.apple.iokit.IO80211FamilyLegacy', 'com.apple.driver.AirPort.BrcmNIC'))
+    available = set().union(*(collection.images[name].exports for name in providers))
     imports = {}
     for name, path in paths.items():
         available.update(nm(path, "-g", "-j", "-U"))
@@ -67,15 +81,7 @@ def audit(configuration):
         target = struct.unpack("<Q", images["Skywalk"].read(parent, 8))[0]
         require(target == images["Skywalk"].symbols[new], f"Skywalk 父类虚表不匹配：{old}")
         repairs.append({"image": "AirPort", "import": old, "replacement": new, "slot": hex(slot), "relocations": [hex(child)]})
-    kernel_symbols = {}
-    for line in nm(KERNEL, "-g", "-n", "-U"):
-        fields = line.split()
-        if len(fields) == 3:
-            try:
-                kernel_symbols[fields[2]] = int(fields[0], 16)
-            except ValueError:
-                pass
-    kernel = Image(KERNEL)
+    kernel_symbols = collection.kernel.symbols
     fixup = images["AirportBrcmFixup"]
     fixup_relocations = relocations(fixup)
     for slot, old, new in reserved:
@@ -85,7 +91,7 @@ def audit(configuration):
         for name in ["__ZN8FakeBrcm10superClassE", "__ZN16AirportBrcmFixup10superClassE"]:
             require((fixup.symbols[name], 8, "__ZN9IOService10gMetaClassE", 0) in fixup_relocations, "AirportBrcmFixup 父类不匹配")
         parent = kernel_symbols["__ZTV9IOService"] + 16 + slot
-        target = struct.unpack("<Q", kernel.read(parent, 8))[0]
+        target = collection.pointer(parent)
         require(target == kernel_symbols[new], f"IOService 父类虚表不匹配：{old}")
         repairs.append({"image": "AirportBrcmFixup", "import": old, "replacement": new, "slot": hex(slot), "relocations": [hex(x) for x in references]})
     for name in missing:
@@ -94,17 +100,28 @@ def audit(configuration):
     report = {
         "copyright": "Copyright © 2026 laobamac. All rights reserved.",
         "configuration": configuration,
-        "kernelCollectionUUID": kernel.uuid,
-        "images": {name: {"uuid": image.uuid, "imports": len(imports[name])} for name, image in images.items()},
+        "kernelCollectionUUID": collection.root.uuid,
+        "kernel": collection.version(),
+        "OSBuild": plistlib.loads((Path(volume) / "System/Library/CoreServices/SystemVersion.plist").read_bytes())["ProductBuildVersion"],
+        "targetVolume": str(volume),
+        "kernelProviders": sorted(providers),
+        "images": {name: {"uuid": image.uuid, "sha256": hashlib.sha256(paths[name].read_bytes()).hexdigest(), "imports": len(imports[name])} for name, image in images.items()},
         "unmatchedImports": [],
         "inheritedVtableRepairs": repairs,
         "openCoreSource": "https://github.com/acidanthera/OpenCorePkg/blob/25d02c8d051dc2e9d9166b5a3b343ec5b77104cc/Library/OcAppleKernelLib/Vtables.c",
         "openCoreLinkExecuted": False,
         "hardwareValidation": "pending",
     }
-    (ROOT / f"build/DependencySymbols-{configuration}.json").write_text(json.dumps(report, indent=2) + "\n")
+    collection.close()
+    destination = Path(output) if output else ROOT / f"build/DependencySymbols-{configuration}.json"
+    destination.write_text(json.dumps(report, indent=2) + "\n")
     return report
 
 
 if __name__ == "__main__":
-    print(json.dumps(audit("Release"), indent=2))
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--configuration', choices=['Debug', 'Release'], default='Release')
+    parser.add_argument('--target-volume', type=Path, default=Path('/'))
+    parser.add_argument('--output', type=Path)
+    args = parser.parse_args()
+    print(json.dumps(audit(args.configuration, args.target_volume, args.output), indent=2))

@@ -66,38 +66,39 @@ static uint32_t randomValue() {
     return randomState;
 }
 
-static void joinStatusVectors() {
+template<bool Sequoia> static void joinStatusVectors() {
+    constexpr auto abi = Sequoia ? bcm::SequoiaABI : bcm::TahoeABI;
     const uint8_t bssid[] = {2, 4, 6, 8, 10, 12};
     for (uint32_t status : {0U, 17U, 65535U}) {
         for (uint32_t result : {0U, 1U, 2U, 9U}) {
-            uint8_t arena[bcm::NativeJoinStatusSize + 16];
+            uint8_t arena[abi.joinStatusSize + 16];
             memset(arena, 0xA5, sizeof(arena));
             auto output = arena + 8;
             const auto addressLength = result == 1 ? sizeof(bssid) : 0;
-            assert(!bcm::encodeJoinStatus(status, result, bssid, addressLength, output, bcm::NativeJoinStatusSize - 1));
+            assert(!bcm::encodeJoinStatus(status, result, bssid, addressLength, output, abi.joinStatusSize - 1, abi));
             for (auto byte : arena)
                 assert(byte == 0xA5);
-            assert(bcm::encodeJoinStatus(status, result, bssid, addressLength, output, bcm::NativeJoinStatusSize));
-            assert(bcm::readUInt32(output + 0x1B8) == status);
-            assert(bcm::readUInt32(output + 0x1BC) == status);
-            assert(bcm::readUInt32(output + 0x1C4) == result);
-            assert(bcm::readUInt32(output + 0x1C8) == 1);
-            for (size_t index = 0; index < 0x1B8; ++index)
-                assert(output[index] == 0);
-            assert(bcm::readUInt32(output + 0x1C0) == 0);
-            for (size_t index = 0; index < 6; ++index)
-                assert(output[0x1CC + index] == (addressLength ? bssid[index] : 0));
+            assert(bcm::encodeJoinStatus(status, result, bssid, addressLength, output, abi.joinStatusSize, abi));
+            uint8_t expected[abi.joinStatusSize] {};
+            bcm::writeUInt32(expected + (Sequoia ? 8 : 0x1B8), status);
+            bcm::writeUInt32(expected + (Sequoia ? 12 : 0x1BC), status);
+            if (!Sequoia) {
+                bcm::writeUInt32(expected + 0x1C4, result);
+                bcm::writeUInt32(expected + 0x1C8, 1);
+            }
+            if (addressLength)
+                memcpy(expected + (Sequoia ? 0 : 0x1CC), bssid, sizeof(bssid));
+            assert(!memcmp(output, expected, sizeof(expected)));
             for (size_t index = 0; index < 8; ++index)
-                assert(arena[index] == 0xA5 && output[bcm::NativeJoinStatusSize + index] == 0xA5);
-            assert(output[0x1D2] == 0 && output[0x1D3] == 0);
+                assert(arena[index] == 0xA5 && output[abi.joinStatusSize + index] == 0xA5);
             ++joinStatusConversions;
         }
     }
-    uint8_t output[bcm::NativeJoinStatusSize];
+    uint8_t output[abi.joinStatusSize];
     memset(output, 0xA5, sizeof(output));
-    assert(!bcm::encodeJoinStatus(0, 1, nullptr, 6, output, sizeof(output)));
-    assert(!bcm::encodeJoinStatus(0, 1, bssid, 5, output, sizeof(output)));
-    assert(!bcm::encodeJoinStatus(0, 1, bssid, 6, nullptr, sizeof(output)));
+    assert(!bcm::encodeJoinStatus(0, 1, nullptr, 6, output, sizeof(output), abi));
+    assert(!bcm::encodeJoinStatus(0, 1, bssid, 5, output, sizeof(output), abi));
+    assert(!bcm::encodeJoinStatus(0, 1, bssid, 6, nullptr, sizeof(output), abi));
     for (auto byte : output)
         assert(byte == 0xA5);
 }
@@ -247,39 +248,47 @@ static void unhex(const char *source, uint8_t *output, size_t length) {
     }
 }
 
-static void associationVector(const char *nativeHex, const char *legacyHex) {
-    uint8_t arena[bcm::NativeAssociateSize + 16];
+template<bool Sequoia> static void associationVectorFor(const char *nativeHex, const char *legacyHex) {
+    constexpr auto abi = Sequoia ? bcm::SequoiaABI : bcm::TahoeABI;
+    uint8_t arena[abi.associateSize + 16];
     memset(arena, 0xA5, sizeof(arena));
     auto buffer = arena + 8;
-    unhex(nativeHex, buffer, bcm::NativeAssociateSize);
-    uint8_t original[bcm::NativeAssociateSize];
+    uint8_t decoded[bcm::TahoeABI.associateSize];
+    unhex(nativeHex, decoded, sizeof(decoded));
+    memcpy(buffer, decoded, abi.associateSize);
+    uint8_t original[abi.associateSize];
     memcpy(original, buffer, sizeof(original));
     uint8_t expected[bcm::LegacyAssociateSize];
     unhex(legacyHex, expected, sizeof(expected));
     bcm::Request request {};
-    request.length = bcm::NativeAssociateSize;
-    assert(!bcm::prepareAssociate(request, buffer, bcm::NativeAssociateSize - 1));
+    request.length = abi.associateSize;
+    assert(!bcm::prepareAssociate(request, buffer, abi.associateSize - 1, abi));
     assert(!memcmp(buffer, original, sizeof(original)));
-    assert(bcm::prepareAssociate(request, buffer, bcm::NativeAssociateSize));
+    assert(bcm::prepareAssociate(request, buffer, abi.associateSize, abi));
     assert(request.length == bcm::LegacyAssociateSize);
     assert(!memcmp(buffer, expected, sizeof(expected)));
-    for (size_t offset = bcm::LegacyAssociateSize; offset < bcm::NativeAssociateSize; ++offset)
+    for (size_t offset = bcm::LegacyAssociateSize; offset < abi.associateSize; ++offset)
         assert(buffer[offset] == 0);
     for (size_t offset = 0; offset < 8; ++offset)
-        assert(arena[offset] == 0xA5 && buffer[bcm::NativeAssociateSize + offset] == 0xA5);
+        assert(arena[offset] == 0xA5 && buffer[abi.associateSize + offset] == 0xA5);
     for (size_t field : {size_t(8), size_t(12), size_t(0x206)}) {
         memcpy(buffer, original, sizeof(original));
         if (field == 0x206)
             buffer[field] = 4;
         else
             buffer[field + 2] = 1;
-        uint8_t rejected[bcm::NativeAssociateSize];
+        uint8_t rejected[abi.associateSize];
         memcpy(rejected, buffer, sizeof(rejected));
-        request.length = bcm::NativeAssociateSize;
-        assert(!bcm::prepareAssociate(request, buffer, bcm::NativeAssociateSize));
+        request.length = abi.associateSize;
+        assert(!bcm::prepareAssociate(request, buffer, abi.associateSize, abi));
         assert(!memcmp(buffer, rejected, sizeof(rejected)));
     }
     ++associationConversions;
+}
+
+static void associationVector(const char *nativeHex, const char *legacyHex) {
+    associationVectorFor<false>(nativeHex, legacyHex);
+    associationVectorFor<true>(nativeHex, legacyHex);
 }
 
 static void associationVectors() {
@@ -353,9 +362,10 @@ static void decode(uint8_t *ring, size_t capacity, bcm::EventState &state, const
     ++checked;
 }
 
-static void boundaries() {
+template<bool Sequoia> static void boundaries() {
+    constexpr auto abi = Sequoia ? bcm::SequoiaABI : bcm::TahoeABI;
     for (uint8_t mask : {uint8_t(0), uint8_t(0x3F), uint8_t(0x40), uint8_t(0xFF)}) {
-        uint8_t arena[bcm::NativeCapabilitySize + 16];
+        uint8_t arena[abi.capabilitySize + 16];
         memset(arena, 0xA5, sizeof(arena));
         auto buffer = arena + 8;
         buffer[bcm::ScanCompletionCapabilityByte] = mask;
@@ -363,41 +373,41 @@ static void boundaries() {
         memcpy(original, buffer, sizeof(original));
         bcm::Request request {};
         request.length = bcm::LegacyCapabilitySize;
-        assert(!bcm::expandCapabilities(request, buffer, bcm::NativeCapabilitySize - 1));
-        assert(bcm::expandCapabilities(request, buffer, bcm::NativeCapabilitySize));
-        assert(request.length == bcm::NativeCapabilitySize);
+        assert(!bcm::expandCapabilities(request, buffer, abi.capabilitySize - 1, abi, true));
+        assert(bcm::expandCapabilities(request, buffer, abi.capabilitySize, abi, true));
+        assert(request.length == abi.capabilitySize);
         for (size_t index = 0; index < bcm::LegacyCapabilitySize; ++index)
             assert(buffer[index] == (index == bcm::ScanCompletionCapabilityByte ?
                    (original[index] | bcm::ScanCompletionCapabilityMask) : original[index]));
-        for (size_t index = bcm::LegacyCapabilitySize; index < bcm::NativeCapabilitySize; ++index)
+        for (size_t index = bcm::LegacyCapabilitySize; index < abi.capabilitySize; ++index)
             assert(buffer[index] == 0);
         for (size_t index = 0; index < 8; ++index)
-            assert(arena[index] == 0xA5 && buffer[bcm::NativeCapabilitySize + index] == 0xA5);
+            assert(arena[index] == 0xA5 && buffer[abi.capabilitySize + index] == 0xA5);
         ++capabilityConversions;
     }
     for (uint16_t capacity : {uint16_t(0), uint16_t(1), uint16_t(0x400), uint16_t(0x800), uint16_t(0xFFFF)}) {
-        uint8_t arena[bcm::NativeScanResultSize + 16];
+        uint8_t arena[abi.scanResultSize + 16];
         memset(arena, 0xA5, sizeof(arena));
         auto buffer = arena + 8;
         memcpy(buffer + bcm::ScanIELengthOffset, &capacity, sizeof(capacity));
         bcm::Request request {};
-        request.length = bcm::NativeScanResultSize;
-        assert(!bcm::prepareScanResult(request, buffer, bcm::NativeScanResultSize - 1));
-        assert(bcm::prepareScanResult(request, buffer, bcm::NativeScanResultSize));
+        request.length = abi.scanResultSize;
+        assert(!bcm::prepareScanResult(request, buffer, abi.scanResultSize - 1, abi));
+        assert(bcm::prepareScanResult(request, buffer, abi.scanResultSize, abi));
         assert(request.length == bcm::LegacyScanResultSize);
         uint16_t limited;
         memcpy(&limited, buffer + bcm::ScanIELengthOffset, sizeof(limited));
         assert(limited == std::min(capacity, uint16_t(bcm::LegacyScanIECapacity)));
         uint8_t original[bcm::LegacyScanResultSize];
         memcpy(original, buffer, sizeof(original));
-        assert(!bcm::expandScanResult(request, buffer, bcm::NativeScanResultSize - 1));
-        assert(bcm::expandScanResult(request, buffer, bcm::NativeScanResultSize));
-        assert(request.length == bcm::NativeScanResultSize);
+        assert(!bcm::expandScanResult(request, buffer, abi.scanResultSize - 1, abi));
+        assert(bcm::expandScanResult(request, buffer, abi.scanResultSize, abi));
+        assert(request.length == abi.scanResultSize);
         assert(!memcmp(original, buffer, sizeof(original)));
-        for (size_t offset = sizeof(original); offset < bcm::NativeScanResultSize; ++offset)
+        for (size_t offset = sizeof(original); offset < abi.scanResultSize; ++offset)
             assert(buffer[offset] == 0);
         for (size_t offset = 0; offset < 8; ++offset)
-            assert(arena[offset] == 0xA5 && buffer[bcm::NativeScanResultSize + offset] == 0xA5);
+            assert(arena[offset] == 0xA5 && buffer[abi.scanResultSize + offset] == 0xA5);
         ++scanConversions;
     }
     for (int32_t value : {INT32_MIN, -1, 0, 1, 0x12345678, INT32_MAX}) {
@@ -552,6 +562,11 @@ static unsigned nativeConsumer() {
     }
     // These optional native-consumer fixtures use private function layouts.
     // A different framework can still build; do not call an unfamiliar layout.
+    if (strcmp(nativeUUID, "A7A35846-4067-3182-B70E-F7477FBC32BD")) {
+        fprintf(stderr, "Native consumer skipped: framework UUID has no executable fixture.\n");
+        dlclose(library);
+        return 0;
+    }
     auto address = reinterpret_cast<const uint8_t *>(header) + 0x32B7A;
     auto scanAddress = reinterpret_cast<const uint8_t *>(header) + 0x6D4F;
     auto roamAddress = reinterpret_cast<const uint8_t *>(header) + 0x37432;
@@ -646,9 +661,9 @@ static unsigned nativeConsumer() {
     }
     for (uint32_t offset : {0U, 4U, 15868U, 16336U, 16380U}) {
         for (uint32_t status : {0U, 17U}) {
-            uint8_t payload[bcm::NativeJoinStatusSize];
+            uint8_t payload[bcm::TahoeABI.joinStatusSize];
             const uint8_t bssid[] = {2, 4, 6, 8, 10, 12};
-            assert(bcm::encodeJoinStatus(status, status ? 2 : 1, bssid, status ? 0 : 6, payload, sizeof(payload)));
+            assert(bcm::encodeJoinStatus(status, status ? 2 : 1, bssid, status ? 0 : 6, payload, sizeof(payload), bcm::TahoeABI));
             memset(ring, 0, sizeof(ring));
             state = {offset, offset, 0};
             uint32_t write = offset;
@@ -675,7 +690,7 @@ static unsigned nativeConsumer() {
     opaque = nullptr;
     assert(open(&opaque) == 0 && opaque);
     for (uint16_t ieLength : {uint16_t(0), uint16_t(32), uint16_t(0x400)}) {
-        uint8_t record[bcm::NativeScanResultSize] {};
+        uint8_t record[bcm::TahoeABI.scanResultSize] {};
         field(record, 0, uint32_t(1));
         field(record, 4, uint32_t(1));
         field(record, 8, uint32_t(1));
@@ -689,9 +704,9 @@ static unsigned nativeConsumer() {
         memcpy(record + 0x61, "SBC", 3);
         field(record, bcm::ScanIELengthOffset, ieLength);
         bcm::Request request {};
-        request.length = bcm::NativeScanResultSize;
-        assert(bcm::prepareScanResult(request, record, sizeof(record)));
-        assert(bcm::expandScanResult(request, record, sizeof(record)));
+        request.length = bcm::TahoeABI.scanResultSize;
+        assert(bcm::prepareScanResult(request, record, sizeof(record), bcm::TahoeABI));
+        assert(bcm::expandScanResult(request, record, sizeof(record), bcm::TahoeABI));
         auto first = CFArrayCreateMutable(nullptr, 0, &kCFTypeArrayCallBacks);
         auto second = CFArrayCreateMutable(nullptr, 0, &kCFTypeArrayCallBacks);
         assert(first && second);
@@ -731,10 +746,39 @@ static unsigned nativeConsumer() {
     return count;
 }
 
+static void profileBoundaries() {
+    assert(!bcm::userABIForKernel(23) && !bcm::userABIForKernel(26));
+    assert(bcm::userABIForKernel(24)->kernel == 24 && bcm::userABIForKernel(25)->kernel == 25);
+    assert(bcm::SequoiaABI.filterMonitorEvents == 0 && bcm::TahoeABI.filterMonitorEvents == 564);
+    for (const auto &abi : {bcm::SequoiaABI, bcm::TahoeABI}) {
+        std::vector<uint8_t> buffer(abi.scanResultSize + 8, 0xA5);
+        bcm::Request request {};
+        request.length = static_cast<uint32_t>(abi.kernel == 24 ? 0x8E0 : 0x8D8);
+        assert(!bcm::prepareScanResult(request, buffer.data(), buffer.size(), abi));
+        request.length = static_cast<uint32_t>(abi.kernel == 24 ? 0x38C : 0x384);
+        assert(!bcm::prepareAssociate(request, buffer.data(), buffer.size(), abi));
+        for (auto byte : buffer)
+            assert(byte == 0xA5);
+        for (bool scanEvents : {false, true}) {
+            memset(buffer.data(), 0, buffer.size());
+            buffer[0] = 0x81;
+            request.length = bcm::LegacyCapabilitySize;
+            assert(bcm::expandCapabilities(request, buffer.data(), buffer.size(), abi, scanEvents));
+            assert(request.length == abi.capabilitySize && buffer[0] == 0x81);
+            assert(buffer[5] == (scanEvents ? 0x40 : 0));
+            for (size_t i = 12; i < abi.capabilitySize; ++i)
+                assert(buffer[i] == 0);
+        }
+    }
+}
+
 int main() {
-    boundaries();
+    profileBoundaries();
+    boundaries<false>();
+    boundaries<true>();
     availabilityVectors();
-    joinStatusVectors();
+    joinStatusVectors<false>();
+    joinStatusVectors<true>();
     powerAvailabilityVectors();
     nativeAvailability();
     associationVectors();
@@ -760,7 +804,8 @@ def source_fingerprint():
     for path in paths:
         digest.update(str(path.relative_to(ROOT)).encode())
         digest.update(path.read_bytes())
-    return digest.hexdigest(), max(path.stat().st_mtime_ns for path in paths)
+    compiled = [path for path in paths if path.parent.name != 'Tools']
+    return digest.hexdigest(), max(path.stat().st_mtime_ns for path in compiled)
 
 
 def main():
@@ -810,15 +855,16 @@ def main():
         executable = Path(folder) / "ABIValidation"
         source.write_text(HOST_SOURCE)
         run(["xcrun", "clang++", "-std=c++14", "-O1", "-g", "-fsanitize=address,undefined", "-fno-omit-frame-pointer",
-             "-mmacosx-version-min=26.0",
+             "-mmacosx-version-min=15.0",
              "-I", str(ROOT / "SimpleBCM"), str(source), "-framework", "IOKit", "-framework", "CoreFoundation", "-lobjc", "-o", str(executable)])
         host = json.loads(run([str(executable)], timeout=60).strip())
     report = {"configuration": args.configuration, "sha256": hashlib.sha256(binary.read_bytes()).hexdigest(), "uuid": image.uuid,
               "sourceFingerprint": fingerprint, "imports": len(imports), "kernelCollectionImports": len(imports & defined), "liluImports": sorted(lilu),
               "liluSHA256": hashlib.sha256(dependency.read_bytes()).hexdigest(),
-              "liluMinimum": "1.7.1", "supportedKernel": "25.x", "driverLoading": "external",
+              "liluMinimum": "1.7.1", "supportedKernel": "24.x / 25.x", "driverLoading": "external",
               "configurationChecks": configuration_checks,
-              "validationMode": "tahoe-host",
+              "validationMode": "host-executed",
+              "codecProfiles": ["Sequoia", "Tahoe"],
               "dependencySymbolInventory": {"images": len(dependencies["images"]), "inheritedVtableRepairs": len(dependencies["inheritedVtableRepairs"]), "unmatchedImports": dependencies["unmatchedImports"]},
               "architecture": "x86_64", "sanitizers": ["AddressSanitizer", "UndefinedBehaviorSanitizer"], "hostABI": host,
               "hardwareValidation": "pending", "OSBuild": run(["sysctl", "-n", "kern.osversion"]).strip()}

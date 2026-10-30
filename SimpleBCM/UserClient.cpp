@@ -278,10 +278,11 @@ IOReturn IO80211APIUserClient::runCommand(IOExternalMethodArguments *arguments, 
     const auto request = legacy.request.type;
     const bool set = header->command == bcm::SetCommand;
     const bool get = header->command == bcm::GetCommand;
+    const auto &abi = bcm::Bridge::abi();
     const bool scalar = get && bcm::Bridge::isScalarGet(static_cast<uint32_t>(request));
-    const bool scanResult = get && request == bcm::ScanResultRequest && outputSize == bcm::NativeScanResultSize;
+    const bool scanResult = get && request == bcm::ScanResultRequest && outputSize == abi.scanResultSize;
     const bool capabilities = get && request == bcm::CardCapabilitiesRequest &&
-        outputSize == bcm::NativeCapabilitySize && endpoint.kind == bcm::InterfaceKind::Classic;
+        outputSize == abi.capabilitySize;
     const bool associate = set && request == bcm::AssociateRequest;
     const bool roamProfiles = request == bcm::RoamProfileRequest &&
         (get ? outputSize : header->length) == bcm::NativeRoamProfileSize;
@@ -292,6 +293,10 @@ IOReturn IO80211APIUserClient::runCommand(IOExternalMethodArguments *arguments, 
         __atomic_fetch_add(&bcm::counters.associationRequests, 1ULL, __ATOMIC_RELAXED);
     if ((!set && !get) || header->length > capacity ||
         strncmp(legacy.request.interfaceName, endpoint.name, sizeof(endpoint.name)))
+        goto done;
+    if ((get && request == bcm::ScanResultRequest && !scanResult) ||
+        (get && request == bcm::CardCapabilitiesRequest && !capabilities) ||
+        (associate && header->length != abi.associateSize))
         goto done;
     if (get && request == 0x178 && !entitled("com.apple.private.wifi.IO80211.get_pmk")) {
         result = kIOReturnNotPrivileged;
@@ -311,15 +316,14 @@ IOReturn IO80211APIUserClient::runCommand(IOExternalMethodArguments *arguments, 
     }
     legacy.request.data = reinterpret_cast<uintptr_t>(shadow);
     legacy.request.length = static_cast<uint32_t>(get ? outputSize : header->length);
-    if (scanResult && !bcm::prepareScanResult(legacy.request, shadow, capacity))
+    if (scanResult && !bcm::prepareScanResult(legacy.request, shadow, capacity, abi))
         goto done;
     if (set && request == bcm::ScanMultipleRequest && header->length == bcm::NativeScanMultipleSize &&
         !bcm::prepareScanMultiple(legacy.request, shadow, capacity))
         goto done;
-    if (associate && header->length == bcm::NativeAssociateSize &&
-        !bcm::prepareAssociate(legacy.request, shadow, capacity))
+    if (associate && !bcm::prepareAssociate(legacy.request, shadow, capacity, abi))
         goto done;
-    if (set && request == bcm::FilterMonitorEvents) {
+    if (set && abi.filterMonitorEvents && static_cast<uint32_t>(request) == abi.filterMonitorEvents) {
         if (legacy.request.length != sizeof(bcm::EventFilter) || header->length < sizeof(bcm::EventFilter))
             goto done;
         IOLockLock(eventLock);
@@ -332,12 +336,13 @@ IOReturn IO80211APIUserClient::runCommand(IOExternalMethodArguments *arguments, 
         result = static_cast<IOReturn>(bcm::Bridge::command(endpoint, set, legacy, shadow, capacity));
     }
     if (result == kIOReturnSuccess) {
-        if (capabilities && !bcm::expandCapabilities(legacy.request, shadow, capacity)) {
+        if (capabilities && !bcm::expandCapabilities(legacy.request, shadow, capacity, abi,
+                                                   endpoint.kind == bcm::InterfaceKind::Classic)) {
             result = kIOReturnOverrun;
             goto done;
         }
         if (scanResult) {
-            if (!bcm::expandScanResult(legacy.request, shadow, capacity)) {
+            if (!bcm::expandScanResult(legacy.request, shadow, capacity, abi)) {
                 result = kIOReturnOverrun;
                 goto done;
             }

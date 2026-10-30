@@ -86,14 +86,18 @@ static BSDName classicName;
 static BSDName virtualName;
 static BSDName skywalkName;
 static PerformCommand classicCommand;
+static const UserABI *activeABI;
 
 static const char *legacyPaths[] = {"/System/Library/Extensions/IO80211FamilyLegacy.kext/Contents/MacOS/IO80211FamilyLegacy"};
 static const char *skywalkPaths[] = {"/System/Library/Extensions/IOSkywalkFamily.kext/Contents/MacOS/IOSkywalkFamily"};
-static const char *airportPaths[] = {"/System/Library/Extensions/AirPortBrcmNIC-Tahoe.kext/Contents/MacOS/AirPortBrcmNIC"};
+static const char *airportPaths[] = {
+    "/System/Library/Extensions/IO80211FamilyLegacy.kext/Contents/PlugIns/AirPortBrcmNIC.kext/Contents/MacOS/AirPortBrcmNIC",
+    "/System/Library/Extensions/AirPortBrcmNIC-Tahoe.kext/Contents/MacOS/AirPortBrcmNIC"
+};
 static KernelPatcher::KextInfo kexts[] = {
     {"com.apple.iokit.IO80211FamilyLegacy", legacyPaths, 1, {true}},
     {"com.apple.iokit.IOSkywalkFamily", skywalkPaths, 1, {true}},
-    {"com.apple.driver.AirPort.BrcmNIC", airportPaths, 1, {true}}
+    {"com.apple.driver.AirPort.BrcmNIC", airportPaths, arrsize(airportPaths), {true}}
 };
 
 static void reject(const char *reason) {
@@ -104,6 +108,10 @@ static void reject(const char *reason) {
 
 bool Bridge::ready() {
     return __atomic_load_n(&state, __ATOMIC_ACQUIRE) == 7;
+}
+
+const UserABI &Bridge::abi() {
+    return *activeABI;
 }
 
 bool Bridge::isScalarGet(uint32_t request) {
@@ -279,8 +287,8 @@ static IOReturn captureJoinEvent(OSObject *, void *argument, void *, void *, voi
         return static_cast<IOReturn>(error);
     }
     if (encodeJoinStatus(status, result, buffer, result == 1 ? sizeof(buffer) : 0,
-                         event->payload, sizeof(event->payload))) {
-        event->length = NativeJoinStatusSize;
+                         event->payload, sizeof(event->payload), Bridge::abi())) {
+        event->length = static_cast<uint32_t>(Bridge::abi().joinStatusSize);
         __atomic_fetch_add(&counters.associationEventConversions, 1ULL, __ATOMIC_RELAXED);
     }
     return kIOReturnSuccess;
@@ -602,11 +610,16 @@ void Bridge::patchKext(void *, KernelPatcher &patcher, size_t index, mach_vm_add
         }
         __atomic_fetch_or(&state, 2U, __ATOMIC_RELEASE);
     } else if (index == kexts[2].loadIndex) {
-        if (!validate(address, size, AirPortGuards, arrsize(AirPortGuards))) {
-            reject("TahoeAirPortBinaryMismatch");
+        const bool sequoia = abi().kernel == 24;
+        const auto guards = sequoia ? AirPortSequoiaGuards : AirPortGuards;
+        const auto guardCount = sequoia ? arrsize(AirPortSequoiaGuards) : arrsize(AirPortGuards);
+        const auto copies = sequoia ? AirPortSequoiaCopySites : AirPortCopySites;
+        const auto copyCount = sequoia ? arrsize(AirPortSequoiaCopySites) : arrsize(AirPortCopySites);
+        if (!validate(address, size, guards, guardCount)) {
+            reject(sequoia ? "SequoiaAirPortBinaryMismatch" : "TahoeAirPortBinaryMismatch");
             return;
         }
-        if (!patchCopies(patcher, address, size, AirPortCopySites, arrsize(AirPortCopySites))) {
+        if (!patchCopies(patcher, address, size, copies, copyCount)) {
             patcher.clearError();
             reject("AirPortCopyRoutingFailed");
             return;
@@ -615,15 +628,18 @@ void Bridge::patchKext(void *, KernelPatcher &patcher, size_t index, mach_vm_add
     }
     if (ready()) {
         __atomic_store_n(&failure, "ReadyForHardwareValidation", __ATOMIC_RELEASE);
-        SYSLOG("bridge", "Tahoe ABI bridge ready");
+        SYSLOG("bridge", "%s ABI bridge ready", abi().name);
     }
 }
 
 void Bridge::initialize() {
-    if (getKernelVersion() != KernelVersion::Tahoe) {
+    activeABI = userABIForKernel(static_cast<uint32_t>(getKernelVersion()));
+    if (!activeABI) {
         reject("UnsupportedKernel");
         return;
     }
+    kexts[2].paths = airportPaths + (activeABI->kernel == 24 ? 0 : 1);
+    kexts[2].pathNum = 1;
     contextLock = IOSimpleLockAlloc();
     hubLock = IOSimpleLockAlloc();
     pending = static_cast<PendingEvent *>(IOMalloc(sizeof(PendingEvent) * PendingCapacity));
@@ -639,7 +655,9 @@ void Bridge::initialize() {
 void Bridge::publish(IOService *service) {
     service->setProperty("Status", __atomic_load_n(&failure, __ATOMIC_ACQUIRE));
     service->setProperty("PatchState", __atomic_load_n(&state, __ATOMIC_ACQUIRE), 32);
-    service->setProperty("SupportedKernel", "25.x");
+    service->setProperty("SupportedKernel", "24.x / 25.x");
+    service->setProperty("ActiveABI", activeABI ? activeABI->name : "Unsupported");
+    service->setProperty("AirPortBackend", !activeABI ? "Unsupported" : activeABI->kernel == 24 ? "Original" : "Tahoe");
     service->setProperty("DriverKitBackend", false);
     struct Metric { const char *name; uint64_t *value; } metrics[] = {
         {"Opens", &counters.opens}, {"DeniedOpens", &counters.denied},

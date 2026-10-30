@@ -16,7 +16,6 @@ namespace bcm {
 
 constexpr uint32_t GetCommand = 0xC02869C9;
 constexpr uint32_t SetCommand = 0x802869C8;
-constexpr uint32_t FilterMonitorEvents = 0x234;
 constexpr size_t CommandCapacity = 0x3C00;
 constexpr size_t LargeCommandCapacity = 0x3C000;
 constexpr size_t EventCapacity = 0x4000;
@@ -34,23 +33,36 @@ constexpr size_t NativeDriverAvailableSize = 0xF8;
 constexpr size_t PowerDataSize = 0x18;
 constexpr uint32_t PowerStateAvailabilityReason = 0xE0821803;
 constexpr uint32_t AssociationDoneEvent = 9;
-constexpr size_t NativeJoinStatusSize = 0x1D4;
 constexpr size_t LegacyCapabilitySize = 12;
-constexpr size_t NativeCapabilitySize = 21;
 constexpr size_t ScanCompletionCapabilityByte = 5;
 constexpr uint8_t ScanCompletionCapabilityMask = 0x40;
 constexpr uint32_t AssociateRequest = 20;
-constexpr size_t NativeAssociateSize = 0x38C;
 constexpr size_t LegacyAssociateSize = 0x224;
 constexpr uint32_t RoamProfileRequest = 216;
 constexpr size_t NativeRoamProfileSize = 0x180;
 constexpr size_t NativeRoamBandSize = 0x80;
 constexpr size_t LegacyRoamBandSize = 0x7C;
 constexpr size_t LegacyScanResultSize = 0x48C;
-constexpr size_t NativeScanResultSize = 0x8E0;
 constexpr size_t ScanIELengthOffset = 0x8A;
 constexpr size_t ScanIEOffset = 0x8C;
 constexpr size_t LegacyScanIECapacity = 0x400;
+
+struct UserABI {
+    uint32_t kernel;
+    const char *name;
+    size_t scanResultSize;
+    size_t capabilitySize;
+    size_t associateSize;
+    size_t joinStatusSize;
+    uint32_t filterMonitorEvents;
+};
+
+constexpr UserABI SequoiaABI {24, "Sequoia", 0x8D8, 19, 0x384, 0x1CC, 0};
+constexpr UserABI TahoeABI {25, "Tahoe", 0x8E0, 21, 0x38C, 0x1D4, 0x234};
+
+inline const UserABI *userABIForKernel(uint32_t kernel) {
+    return kernel == 24 ? &SequoiaABI : kernel == 25 ? &TahoeABI : nullptr;
+}
 
 inline size_t eventPayloadSize(uint32_t event, size_t length) {
     return event == DriverAvailableEvent && length == LegacyDriverAvailableSize
@@ -114,8 +126,8 @@ inline bool encodeScalarResult(Request &request, uint8_t *buffer, size_t capacit
     return true;
 }
 
-inline bool prepareScanResult(Request &request, uint8_t *buffer, size_t capacity) {
-    if (!buffer || capacity < NativeScanResultSize || request.length != NativeScanResultSize)
+inline bool prepareScanResult(Request &request, uint8_t *buffer, size_t capacity, const UserABI &abi) {
+    if (!buffer || capacity < abi.scanResultSize || request.length != abi.scanResultSize)
         return false;
     uint16_t length = static_cast<uint16_t>(buffer[ScanIELengthOffset] |
                                           (uint16_t(buffer[ScanIELengthOffset + 1]) << 8));
@@ -127,22 +139,24 @@ inline bool prepareScanResult(Request &request, uint8_t *buffer, size_t capacity
     return true;
 }
 
-inline bool expandScanResult(Request &request, uint8_t *buffer, size_t capacity) {
-    if (!buffer || capacity < NativeScanResultSize || request.length != LegacyScanResultSize)
+inline bool expandScanResult(Request &request, uint8_t *buffer, size_t capacity, const UserABI &abi) {
+    if (!buffer || capacity < abi.scanResultSize || request.length != LegacyScanResultSize)
         return false;
-    for (size_t offset = LegacyScanResultSize; offset < NativeScanResultSize; ++offset)
+    for (size_t offset = LegacyScanResultSize; offset < abi.scanResultSize; ++offset)
         buffer[offset] = 0;
-    request.length = NativeScanResultSize;
+    request.length = static_cast<uint32_t>(abi.scanResultSize);
     return true;
 }
 
-inline bool expandCapabilities(Request &request, uint8_t *buffer, size_t capacity) {
-    if (!buffer || capacity < NativeCapabilitySize || request.length != LegacyCapabilitySize)
+inline bool expandCapabilities(Request &request, uint8_t *buffer, size_t capacity, const UserABI &abi,
+                               bool scanEvents) {
+    if (!buffer || capacity < abi.capabilitySize || request.length != LegacyCapabilitySize)
         return false;
-    for (size_t offset = LegacyCapabilitySize; offset < NativeCapabilitySize; ++offset)
+    for (size_t offset = LegacyCapabilitySize; offset < abi.capabilitySize; ++offset)
         buffer[offset] = 0;
-    buffer[ScanCompletionCapabilityByte] |= ScanCompletionCapabilityMask;
-    request.length = NativeCapabilitySize;
+    if (scanEvents)
+        buffer[ScanCompletionCapabilityByte] |= ScanCompletionCapabilityMask;
+    request.length = static_cast<uint32_t>(abi.capabilitySize);
     return true;
 }
 
@@ -194,23 +208,26 @@ inline bool encodePowerAvailability(const uint8_t *power, size_t length,
 }
 
 inline bool encodeJoinStatus(uint32_t status, uint32_t result, const uint8_t *bssid,
-                              size_t bssidLength, uint8_t *output, size_t capacity) {
-    if (!output || capacity < NativeJoinStatusSize ||
+                              size_t bssidLength, uint8_t *output, size_t capacity, const UserABI &abi) {
+    if (!output || capacity < abi.joinStatusSize ||
         (bssidLength && (!bssid || bssidLength != 6)))
         return false;
-    for (size_t index = 0; index < NativeJoinStatusSize; ++index)
+    for (size_t index = 0; index < abi.joinStatusSize; ++index)
         output[index] = 0;
-    writeUInt32(output + 0x1B8, status);
-    writeUInt32(output + 0x1BC, status);
-    writeUInt32(output + 0x1C4, result);
-    writeUInt32(output + 0x1C8, 1);
+    const bool sequoia = abi.kernel == 24;
+    writeUInt32(output + (sequoia ? 0x08 : 0x1B8), status);
+    writeUInt32(output + (sequoia ? 0x0C : 0x1BC), status);
+    if (!sequoia) {
+        writeUInt32(output + 0x1C4, result);
+        writeUInt32(output + 0x1C8, 1);
+    }
     for (size_t index = 0; index < bssidLength; ++index)
-        output[0x1CC + index] = bssid[index];
+        output[(sequoia ? 0 : 0x1CC) + index] = bssid[index];
     return true;
 }
 
-inline bool prepareAssociate(Request &request, uint8_t *buffer, size_t capacity) {
-    if (!buffer || capacity < NativeAssociateSize || request.length != NativeAssociateSize)
+inline bool prepareAssociate(Request &request, uint8_t *buffer, size_t capacity, const UserABI &abi) {
+    if (!buffer || capacity < abi.associateSize || request.length != abi.associateSize)
         return false;
     const auto lower = readUInt32(buffer + 8);
     const auto upper = readUInt32(buffer + 12);
@@ -227,7 +244,7 @@ inline bool prepareAssociate(Request &request, uint8_t *buffer, size_t capacity)
         buffer[offset] = 0;
     for (size_t offset = 0x218; offset < LegacyAssociateSize; ++offset)
         buffer[offset] = buffer[offset + 0x2C];
-    for (size_t offset = LegacyAssociateSize; offset < NativeAssociateSize; ++offset)
+    for (size_t offset = LegacyAssociateSize; offset < abi.associateSize; ++offset)
         buffer[offset] = 0;
     request.length = LegacyAssociateSize;
     return true;

@@ -11,10 +11,13 @@ import copy
 import hashlib
 import json
 import plistlib
+import shutil
+import subprocess
+import sys
 import tempfile
 from pathlib import Path
 
-from configure import APPLE_NVRAM, FIXUP, INJECTOR, drivers, fragment, merge
+from configure import AIRPORT_SEQUOIA, AIRPORT_TAHOE, APPLE_NVRAM, FIXUP, INJECTOR, SYSTEMS, drivers, fragment, merge
 from preflight import check_configuration, enabled
 
 
@@ -35,17 +38,18 @@ def verify():
             (oc / "config.plist").write_bytes(plistlib.dumps(config))
             return check_configuration(oc, running, manifest)[0]
 
-        def active(config, running=(25, 6, 0)):
+        def active(config, running):
             return [entry["BundlePath"] for entry in config["Kernel"]["Add"] if enabled(entry, running)]
 
+        versions = [(major, minor, patch) for major in [24, 25] for minor, patch in [(0, 0), (1, 0), (6, 0), (99, 99)]]
         for optional in [False, True]:
             config = fragment(optional)
-            assert active(config) == [entry[0] for entry in drivers(optional)]
             assert "NVRAM" not in config
-            for running in [(25, 0, 0), (25, 1, 0), (25, 6, 0), (25, 99, 99)]:
+            for running in versions:
+                assert active(config, running) == [entry[0] for entry in drivers(optional, running[0])]
                 assert not issues(config, running), issues(config, running)
                 checks += 1
-            for running in [(24, 99, 99), (26, 0, 0)]:
+            for running in [(23, 99, 99), (26, 0, 0)]:
                 assert not active(config, running)
                 assert issues(config, running)
                 checks += 1
@@ -54,80 +58,80 @@ def verify():
         for entry in old_fragment["Kernel"]["Add"]:
             entry.update(MinKernel="25.6.0", MaxKernel="25.6.0")
         upgraded = merge(old_fragment)
-        for running in [(25, 0, 0), (25, 6, 0), (25, 99, 99)]:
+        for running in versions:
             assert not issues(upgraded, running), issues(upgraded, running)
             checks += 1
 
-        # Migrate the two-entry package and preserve the user's NVRAM exactly.
         original = fragment()
         original["Kernel"]["Add"] = original["Kernel"]["Add"][:2]
         original["Misc"] = {"Boot": {"PickerMode": "External"}}
         original["NVRAM"] = {"Add": {APPLE_NVRAM: {"boot-args": b"-v keepsyms=0 alcid=1\0"}}}
         before = copy.deepcopy(original)
-        migrated = merge(original)
+        migrated = merge(original, True)
         assert original == before
-        assert migrated["Misc"] == original["Misc"]
-        assert migrated["NVRAM"] == original["NVRAM"]
-        assert not issues(migrated), issues(migrated)
-        assert active(migrated) == [entry[0] for entry in drivers()]
+        assert migrated["Misc"] == original["Misc"] and migrated["NVRAM"] == original["NVRAM"]
         assert merge(migrated) == migrated
-        checks += 1
+        for running in versions:
+            assert not issues(migrated, running), issues(migrated, running)
+            checks += 1
 
-        # Replace duplicate Tahoe entries while preserving older/future OS ranges.
         original = fragment(True)
         for entry in original["Kernel"]["Add"][2:]:
             entry.update(MinKernel="", MaxKernel="")
-        old_plugin = dict(original["Kernel"]["Add"][-1],
-            BundlePath="IO80211FamilyLegacy.kext/Contents/PlugIns/AirPortBrcmNIC.kext")
-        original["Kernel"]["Add"] += [old_plugin, copy.deepcopy(original["Kernel"]["Add"][3])]
+        original["Kernel"]["Add"].append(copy.deepcopy(original["Kernel"]["Add"][3]))
         migrated = merge(original)
-        for running in [(25, 0, 0), (25, 6, 0), (25, 99, 99)]:
+        for running in versions:
             assert not issues(migrated, running), issues(migrated, running)
-            assert active(migrated, running) == [entry[0] for entry in drivers(True)]
+            assert active(migrated, running) == [entry[0] for entry in drivers(True, running[0])]
             checks += 1
         assert merge(migrated) == migrated
-        assert old_plugin["BundlePath"] in active(migrated, (24, 6, 0))
-        assert old_plugin["BundlePath"] in active(migrated, (26, 0, 0))
+        assert AIRPORT_SEQUOIA[0] in active(migrated, (23, 6, 0))
+        assert AIRPORT_TAHOE[0] in active(migrated, (26, 0, 0))
         checks += 1
 
         legacy_only = fragment()
-        legacy_only["Kernel"]["Add"].append(dict(fragment(True)["Kernel"]["Add"][2], MinKernel="", MaxKernel="24.99.99"))
+        legacy_only["Kernel"]["Add"].append(dict(fragment(True)["Kernel"]["Add"][2], MinKernel="", MaxKernel="23.99.99"))
         migrated = merge(legacy_only)
-        assert FIXUP[0] not in active(migrated)
+        assert FIXUP[0] not in active(migrated, (24, 6, 0))
+        assert FIXUP[0] not in active(migrated, (25, 6, 0))
         assert merge(migrated) == migrated
         checks += 1
 
-        for mutation in ["duplicate-lilu", "old-lilu", "no-block", "missing-skywalk", "duplicate-skywalk",
-                         "old-airport", "bad-path", "lilu-order", "missing-injector", "orphan-injector"]:
-            config = fragment(mutation == "missing-injector")
-            if mutation == "duplicate-lilu":
-                config["Kernel"]["Add"].append(copy.deepcopy(config["Kernel"]["Add"][0]))
-            elif mutation == "old-lilu":
-                path = oc / "Kexts/Lilu.kext/Contents/Info.plist"
-                saved = path.read_bytes()
-                info = plistlib.loads(saved)
-                info["CFBundleVersion"] = "1.7.0"
-                path.write_bytes(plistlib.dumps(info))
-            elif mutation == "no-block":
-                config["Kernel"]["Block"] = []
-            elif mutation == "missing-skywalk":
-                config["Kernel"]["Add"].pop(2)
-            elif mutation == "duplicate-skywalk":
-                config["Kernel"]["Add"].append(copy.deepcopy(config["Kernel"]["Add"][2]))
-            elif mutation == "old-airport":
-                config["Kernel"]["Add"].append(old_plugin)
-            elif mutation == "bad-path":
-                config["Kernel"]["Add"][1]["ExecutablePath"] = "Contents/MacOS/Other"
-            elif mutation == "lilu-order":
-                config["Kernel"]["Add"].reverse()
-            elif mutation == "missing-injector":
-                config["Kernel"]["Add"].pop()
-            elif mutation == "orphan-injector":
-                config["Kernel"]["Add"].append(fragment(True)["Kernel"]["Add"][-1])
-            assert issues(config), mutation
-            if mutation == "old-lilu":
-                path.write_bytes(saved)
-            checks += 1
+        for major in [24, 25]:
+            for mutation in ["duplicate-lilu", "old-lilu", "no-block", "missing-skywalk", "duplicate-skywalk",
+                             "wrong-airport", "bad-path", "lilu-order", "missing-injector", "orphan-injector"]:
+                config = fragment(mutation == "missing-injector")
+                additions = config["Kernel"]["Add"]
+                if mutation == "duplicate-lilu":
+                    additions.append(copy.deepcopy(additions[0]))
+                elif mutation == "old-lilu":
+                    path = oc / "Kexts/Lilu.kext/Contents/Info.plist"
+                    saved = path.read_bytes()
+                    info = plistlib.loads(saved)
+                    info["CFBundleVersion"] = "1.7.0"
+                    path.write_bytes(plistlib.dumps(info))
+                elif mutation == "no-block":
+                    config["Kernel"]["Block"] = []
+                elif mutation == "missing-skywalk":
+                    additions.pop(2)
+                elif mutation == "duplicate-skywalk":
+                    additions.append(copy.deepcopy(additions[2]))
+                elif mutation == "wrong-airport":
+                    wrong = AIRPORT_TAHOE if major == 24 else AIRPORT_SEQUOIA
+                    entry = next(e for e in additions if e['BundlePath'] == wrong[0])
+                    entry.update(MinKernel="24.0.0", MaxKernel="25.99.99")
+                elif mutation == "bad-path":
+                    additions[1]["ExecutablePath"] = "Contents/MacOS/Other"
+                elif mutation == "lilu-order":
+                    additions.reverse()
+                elif mutation == "missing-injector":
+                    additions.pop()
+                elif mutation == "orphan-injector":
+                    additions.append(fragment(True)["Kernel"]["Add"][-1])
+                assert issues(config, (major, 6, 0)), (major, mutation)
+                if mutation == "old-lilu":
+                    path.write_bytes(saved)
+                checks += 1
 
         manifest = {"files": {}}
         for path in (oc / "Kexts").rglob("*"):
@@ -137,21 +141,71 @@ def verify():
                 manifest["files"][prefix + rel] = hashlib.sha256(path.read_bytes()).hexdigest()
         manifest_path = oc / "manifest.json"
         manifest_path.write_text(json.dumps(manifest))
-        assert not issues(fragment(True), manifest=manifest_path)
-        path = oc / "Kexts/IOSkywalkFamily.kext/Contents/MacOS/IOSkywalkFamily"
-        saved = path.read_bytes()
-        path.write_bytes(b"changed")
-        assert any("SHA-256" in issue for issue in issues(fragment(), manifest=manifest_path))
-        path.write_bytes(saved)
-        checks += 2
+        for major in [24, 25]:
+            assert not issues(fragment(True), (major, 6, 0), manifest_path)
+            path = oc / 'Kexts' / (AIRPORT_SEQUOIA if major == 24 else AIRPORT_TAHOE)[0] / 'Contents/MacOS/AirPortBrcmNIC'
+            saved = path.read_bytes()
+            path.write_bytes(b"changed")
+            assert any("SHA-256" in issue for issue in issues(fragment(), (major, 6, 0), manifest_path))
+            path.write_bytes(saved)
+            checks += 2
+
+        for major in [24, 25]:
+            config = fragment()
+            backend = AIRPORT_SEQUOIA if major == 24 else AIRPORT_TAHOE
+            alias = f'Renamed{major}.kext'
+            shutil.copytree(oc / 'Kexts' / backend[0], oc / 'Kexts' / alias)
+            entry = dict(next(e for e in config['Kernel']['Add'] if e['BundlePath'] == backend[0]))
+            entry['BundlePath'] = alias
+            config['Kernel']['Add'].append(entry)
+            assert any('Bundle ID' in issue for issue in issues(config, (major, 6, 0)))
+            checks += 1
 
         config = fragment()
         config["Kernel"]["Add"][0]["BundlePath"] = "Shared/Lilu.kext"
         shared = oc / "Kexts/Shared"
         shared.mkdir()
         (oc / "Kexts/Lilu.kext").rename(shared / "Lilu.kext")
-        assert not issues(merge(config))
-        checks += 1
+        for major in [24, 25]:
+            assert not issues(merge(config), (major, 6, 0))
+            checks += 1
+        for system, major in SYSTEMS.items():
+            other = 25 if major == 24 else 24
+            for optional in [False, True]:
+                config = fragment(optional, major)
+                assert active(config, (major, 6, 0)) == [entry[0] for entry in drivers(optional, major)]
+                assert not active(config, (other, 6, 0))
+                for entry in config['Kernel']['Add'] + config['Kernel']['Block']:
+                    assert entry['MinKernel'] == f'{major}.0.0' and entry['MaxKernel'] == f'{major}.99.99'
+                config['Kernel']['Add'][0]['BundlePath'] = 'Shared/Lilu.kext'
+                assert not issues(config, (major, 6, 0))
+                checks += 1
+            original = fragment(True)
+            original['Kernel']['Add'][0]['BundlePath'] = 'Shared/Lilu.kext'
+            migrated = merge(original, kernel_version=major)
+            assert active(migrated, (other, 6, 0)) == active(original, (other, 6, 0))
+            assert not issues(migrated, (major, 6, 0))
+            assert merge(migrated, kernel_version=major) == migrated
+            checks += 1
+            manifest['system'] = system
+            manifest_path.write_text(json.dumps(manifest))
+            assert any('发布包面向' in issue for issue in issues(original, (other, 6, 0), manifest_path))
+            extra = oc / system / 'Extra'
+            (extra / 'Tools').mkdir(parents=True)
+            shutil.copy2(Path(__file__).with_name('configure.py'), extra / 'Tools/configure.py')
+            (extra / 'manifest.json').write_text(json.dumps({'system': system}))
+            output = extra / 'generated.plist'
+            subprocess.run([sys.executable, '-B', str(extra / 'Tools/configure.py'), '--output', str(output),
+                            '--airportbrcmfixup'], check=True, capture_output=True)
+            assert plistlib.loads(output.read_bytes()) == fragment(True, major)
+            checks += 2
+        for invalid in [23, 26]:
+            try:
+                fragment(kernel=invalid)
+            except ValueError:
+                checks += 1
+            else:
+                raise AssertionError('Unsupported package kernel accepted')
 
         for broken in [[], [fragment()["Kernel"]["Add"][0]] * 2]:
             try:
@@ -160,8 +214,9 @@ def verify():
                 checks += 1
             else:
                 raise AssertionError("Invalid Lilu input accepted")
-    return {"checks": checks, "kernelRange": "25.0.0–25.99.99", "driverLoading": "external",
-            "optionalAirportBrcmFixup": True, "migrationIdempotent": True, "bootArgumentsPreserved": True}
+    return {"checks": checks, "kernelRange": "24.0.0–25.99.99", "driverLoading": "external",
+            "exclusiveAirPortBackends": True, "optionalAirportBrcmFixup": True,
+            "migrationIdempotent": True, "bootArgumentsPreserved": True}
 
 
 if __name__ == "__main__":

@@ -45,12 +45,14 @@ def main():
     if [entry["request"] for entry in scalar] != SCALAR_GET_REQUESTS:
         raise RuntimeError("标量 GET 映射与真实代码不一致")
     copies = []
-    for label in ["Legacy", "AirPort"]:
+    for label in ["Legacy", "AirPort", "AirPortSequoia"]:
         binary = Image(IMAGES[label])
         for address, _, symbol, kind in relocations(binary):
             if symbol in ("_copyin", "_copyout") and kind == 2:
                 copies.append({"image": label, "address": hex(address - 1), "symbol": binary.name(address - 1), "operation": symbol})
-    assert len(copies) == 16
+    assert len(copies) == 18
+    for backend in ["AirPort", "AirPortSequoia"]:
+        assert len([entry for entry in copies if entry["image"] in ("Legacy", backend)]) == 16
     scan = blocks[table[10]]
     if not re.search(r"cmpl\s+\$0x48c, 0x18\(%rbx\)", scan):
         raise RuntimeError("扫描结果旧结构长度检查发生变化")
@@ -65,8 +67,8 @@ def main():
     report = {"copyright": "Copyright © 2026 laobamac. All rights reserved.", "legacySHA256": hashlib.sha256(image.path.read_bytes()).hexdigest(),
               "getTableCapacity": 417, "populatedGetEntries": sum(bool(x) for x in table), "uniqueGetCodecs": len(set(table) - {0}),
               "scalarGetRequests": scalar, "adaptedCopySites": copies,
-              "associateTransfer": {"request": 20, "legacySize": 0x224, "nativeSize": 0x38C,
-                                    "legacyCodec": "0x84430", "nativeProducer": "0xa094", "driverConsumer": "0x42b8e",
+              "associateTransfer": {"request": 20, "legacySize": 0x224, "nativeSize": {"Sequoia": 0x384, "Tahoe": 0x38C},
+                                    "legacyCodec": "0x84430", "nativeProducer": {"Sequoia": "0xa053", "Tahoe": "0xa094"}, "driverConsumer": "0x42b8e",
                                     "authLower": {"legacyOffset": 6, "legacyWidth": 2, "nativeOffset": 8, "nativeWidth": 4},
                                     "authUpper": {"legacyOffset": 8, "legacyWidth": 2, "nativeOffset": 12, "nativeWidth": 4},
                                     "ssidLength": {"legacyOffset": 0xC, "nativeOffset": 0x10},
@@ -79,12 +81,12 @@ def main():
                                       "nativeAllBandsSize": 0x180, "nativeValidOffset": 12,
                                       "legacyRecordsOffset": 12, "nativeRecordsOffset": 16,
                                       "legacySetCodec": "0x8b211", "legacyGetCodec": "0x806fb",
-                                      "nativeBandParser": "0x37432", "bands": [2, 4]},
-              "capabilityTransfer": {"request": 12, "legacySize": 12, "nativeSize": 21,
-                                     "legacyCodec": "0x78cb7", "nativeBindSizeInstruction": "0x26a29",
+                                      "nativeBandParser": {"Sequoia": "0x33d0a", "Tahoe": "0x37432"}, "bands": [2, 4]},
+              "capabilityTransfer": {"request": 12, "legacySize": 12, "nativeSize": {"Sequoia": 19, "Tahoe": 21},
+                                     "legacyCodec": "0x78cb7", "nativeBindSizeInstruction": {"Sequoia": "0x2672a", "Tahoe": "0x26a29"},
                                      "scanCompletionCapability": 46, "nativeScanWaitTest": "0x4259",
-                                     "scope": "Classic IOUC; bridge provides scan completion events; other hardware bits are preserved."},
-              "scanResultTransfer": {"request": 11, "legacySize": 0x48C, "nativeSize": 0x8E0,
+                                     "scope": "Native-sized output for all endpoints; only Classic advertises bridge scan completion events; other hardware bits are preserved."},
+              "scanResultTransfer": {"request": 11, "legacySize": 0x48C, "nativeSize": {"Sequoia": 0x8D8, "Tahoe": 0x8E0},
                                      "commonHeaderSize": 0x8C, "ieLengthOffset": 0x8A,
                                      "legacyIECapacity": 0x400, "nativeIECapacity": 0x800,
                                      "legacyCodec": "0x78a33", "nativeCallerSizeInstruction": "0x4333",
@@ -95,7 +97,7 @@ def main():
     content = json.dumps(report, indent=2, ensure_ascii=False) + "\n"
     if not destination.exists() or destination.read_text() != content:
         destination.write_text(content)
-    print(f"GET 表核对：{report['populatedGetEntries']} 项 / {report['uniqueGetCodecs']} 个编解码入口，{len(scalar)} 项标量结果，16 处受限拷贝入口。")
+    print(f"GET 表核对：{report['populatedGetEntries']} 项 / {report['uniqueGetCodecs']} 个编解码入口，{len(scalar)} 项标量结果，每个后端 16 处受限拷贝入口。")
 
 
 if __name__ == "__main__":

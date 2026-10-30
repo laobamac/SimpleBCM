@@ -68,6 +68,7 @@ class Bridge {
 public:
     static void initialize();
     static bool ready();
+    static const UserABI &abi();
     static uint64_t copyAvailability(const Endpoint &endpoint, AvailabilityEvent &event);
     static int refreshAvailability(const Endpoint &endpoint);
     static bool isScalarGet(uint32_t request);

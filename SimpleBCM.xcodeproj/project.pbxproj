@@ -186,7 +186,7 @@
 			isa = XCBuildConfiguration;
 			baseConfigurationReference = 000000000000000000000079 /* Config/Kernel.xcconfig */;
 			buildSettings = {
-				MACOSX_DEPLOYMENT_TARGET = 26.0;
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
 				MODULE_NAME = cn.laobamac.SimpleBCM;
 			};
 			name = Debug;
@@ -195,7 +195,7 @@
 			isa = XCBuildConfiguration;
 			baseConfigurationReference = 000000000000000000000079 /* Config/Kernel.xcconfig */;
 			buildSettings = {
-				MACOSX_DEPLOYMENT_TARGET = 26.0;
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
 				MODULE_NAME = cn.laobamac.SimpleBCM;
 			};
 			name = Release;
@@ -207,7 +207,7 @@
 				CLANG_ENABLE_OBJC_ARC = YES;
 				CODE_SIGNING_ALLOWED = NO;
 				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
-				MACOSX_DEPLOYMENT_TARGET = 26.0;
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
 				OTHER_CFLAGS = (
 					"-Wall",
 					"-Wextra",
@@ -232,7 +232,7 @@
 				CLANG_ENABLE_OBJC_ARC = YES;
 				CODE_SIGNING_ALLOWED = NO;
 				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
-				MACOSX_DEPLOYMENT_TARGET = 26.0;
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
 				OTHER_CFLAGS = (
 					"-Wall",
 					"-Wextra",

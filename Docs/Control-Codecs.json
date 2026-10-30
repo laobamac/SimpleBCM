@@ -462,14 +462,32 @@
       "address": "0x386c6",
       "symbol": "__ZN15AirPort_BrcmNIC11wlIocCommonEP13apple80211reqP8OSObjectbb+0x1fe",
       "operation": "_copyout"
+    },
+    {
+      "image": "AirPortSequoia",
+      "address": "0x38538",
+      "symbol": "__ZN15AirPort_BrcmNIC11wlIocCommonEP13apple80211reqP8OSObjectbb+0x70",
+      "operation": "_copyin"
+    },
+    {
+      "image": "AirPortSequoia",
+      "address": "0x386c6",
+      "symbol": "__ZN15AirPort_BrcmNIC11wlIocCommonEP13apple80211reqP8OSObjectbb+0x1fe",
+      "operation": "_copyout"
     }
   ],
   "associateTransfer": {
     "request": 20,
     "legacySize": 548,
-    "nativeSize": 908,
+    "nativeSize": {
+      "Sequoia": 900,
+      "Tahoe": 908
+    },
     "legacyCodec": "0x84430",
-    "nativeProducer": "0xa094",
+    "nativeProducer": {
+      "Sequoia": "0xa053",
+      "Tahoe": "0xa094"
+    },
     "driverConsumer": "0x42b8e",
     "authLower": {
       "legacyOffset": 6,
@@ -520,7 +538,10 @@
     "nativeRecordsOffset": 16,
     "legacySetCodec": "0x8b211",
     "legacyGetCodec": "0x806fb",
-    "nativeBandParser": "0x37432",
+    "nativeBandParser": {
+      "Sequoia": "0x33d0a",
+      "Tahoe": "0x37432"
+    },
     "bands": [
       2,
       4
@@ -529,17 +550,26 @@
   "capabilityTransfer": {
     "request": 12,
     "legacySize": 12,
-    "nativeSize": 21,
+    "nativeSize": {
+      "Sequoia": 19,
+      "Tahoe": 21
+    },
     "legacyCodec": "0x78cb7",
-    "nativeBindSizeInstruction": "0x26a29",
+    "nativeBindSizeInstruction": {
+      "Sequoia": "0x2672a",
+      "Tahoe": "0x26a29"
+    },
     "scanCompletionCapability": 46,
     "nativeScanWaitTest": "0x4259",
-    "scope": "Classic IOUC; bridge provides scan completion events; other hardware bits are preserved."
+    "scope": "Native-sized output for all endpoints; only Classic advertises bridge scan completion events; other hardware bits are preserved."
   },
   "scanResultTransfer": {
     "request": 11,
     "legacySize": 1164,
-    "nativeSize": 2272,
+    "nativeSize": {
+      "Sequoia": 2264,
+      "Tahoe": 2272
+    },
     "commonHeaderSize": 140,
     "ieLengthOffset": 138,
     "legacyIECapacity": 1024,

@@ -70,35 +70,10 @@ jobs:
         run: python3 Tools/build.py --configuration Release
       - name: Analyze Release
         run: python3 Tools/build.py --configuration Release --analyze
-      - name: Package
+      - name: Package and verify four variants
         env:
           CHANNEL: ${{ steps.channel.outputs.value }}
         run: python3 Tools/package.py --channel "$CHANNEL"
-      - name: Validate package layout and hashes
-        env:
-          CHANNEL: ${{ steps.channel.outputs.value }}
-        run: |
-          python3 - <<'PY'
-          import hashlib, json, os, sys, zipfile
-          from pathlib import Path
-          sys.path.insert(0, 'Tools')
-          from package import package_name
-          name = package_name(os.environ['CHANNEL'])
-          path = Path('dist') / (name + '.zip')
-          assert path.with_name(path.name + '.sha256').read_text().split() == [hashlib.sha256(path.read_bytes()).hexdigest(), path.name]
-          with zipfile.ZipFile(path) as archive:
-              assert archive.testzip() is None
-              paths = {p.removeprefix(name + '/') for p in archive.namelist()}
-              assert {p.split('/')[0] for p in paths} == {'EFI', 'Debug', 'Release', 'Extra', 'config.fragment.plist'}
-              manifest = json.loads(archive.read(name + '/Extra/manifest.json'))
-              assert paths == set(manifest['files']) | {'Extra/manifest.json'}
-              assert manifest['driverLoading'] == 'external'
-              assert len(manifest['bundles']) == 5
-              for relative, digest in manifest['files'].items():
-                  assert hashlib.sha256(archive.read(name + '/' + relative)).hexdigest() == digest, relative
-              assert archive.read(name + '/Release/SimpleBCM.kext/Contents/MacOS/SimpleBCM') == archive.read(name + '/EFI/OC/Kexts/SimpleBCM.kext/Contents/MacOS/SimpleBCM')
-          print('Package layout and all file hashes verified.')
-          PY
       - name: Upload packages
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:

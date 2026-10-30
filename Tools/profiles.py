@@ -20,6 +20,7 @@ BINARY = ROOT / ".research/binaries"
 IMAGES = {
     "Legacy": BINARY / "IO80211FamilyLegacy-v1.0.0/IO80211FamilyLegacy.kext/Contents/MacOS/IO80211FamilyLegacy",
     "Skywalk": BINARY / "IOSkywalkFamily-v1.2.0/IOSkywalkFamily.kext/Contents/MacOS/IOSkywalkFamily",
+    "AirPortSequoia": BINARY / "IO80211FamilyLegacy-v1.0.0/IO80211FamilyLegacy.kext/Contents/PlugIns/AirPortBrcmNIC.kext/Contents/MacOS/AirPortBrcmNIC",
     "AirPort": BINARY / "AirPortBrcmNIC-Tahoe-v1.0.0/AirPortBrcmNIC-Tahoe.kext/Contents/MacOS/AirPortBrcmNIC",
 }
 SYMBOLS = {
@@ -42,6 +43,7 @@ SYMBOLS = {
     "Skywalk": ["__ZN26IOSkywalkEthernetInterface13newUserClientEP4taskPvjP12OSDictionaryPP12IOUserClient"],
     "AirPort": ["_bcm_decode_anqp_nai_realm_print", "__dma_detach", "_dma64_txfast", "__dma_rxfill", "__dma_getnextrxp"],
 }
+SYMBOLS["AirPortSequoia"] = SYMBOLS["AirPort"]
 SCALAR_GET_REQUESTS = [5, 8, 13, 15, 18, 21, 26, 28, 31, 33, 34, 35, 36, 41, 45, 50, 52, 55, 56, 57, 58, 59, 60,
                        63, 64, 70, 71, 72, 82, 87, 88, 96, 100, 101, 235, 241, 256, 258, 259, 261, 265, 267, 336, 353, 369]
 
@@ -72,7 +74,7 @@ def numbers(data):
 
 def main():
     lines = ["//", "//  Profiles.hpp", "//  SimpleBCM", "//", "//  Created by laobamac on 2026/9/15.", "//  Copyright © 2026 laobamac. All rights reserved.", "//", "", "#ifndef SIMPLEBCM_PROFILES_HPP", "#define SIMPLEBCM_PROFILES_HPP", "", "#include <stdint.h>", "", "namespace bcm {", "struct ByteGuard { uint32_t offset; uint8_t bytes[32]; uint8_t mask[32]; };", "struct CopySite { uint32_t offset; bool output; };", ""]
-    manifest = {"copyright": "Copyright © 2026 laobamac. All rights reserved.", "supportedKernel": "25.x", "images": {}}
+    manifest = {"copyright": "Copyright © 2026 laobamac. All rights reserved.", "supportedKernel": "24.x / 25.x", "images": {}}
     for label, path in IMAGES.items():
         image = Image(path)
         relocs = relocations(image)
@@ -93,15 +95,15 @@ def main():
                     guards.append((address, name))
             lines.append(f"static const uint16_t ScalarGetRequests[] = {{{', '.join(str(x) for x in SCALAR_GET_REQUESTS)}}};")
         copies = [(a - 1, n == "_copyout") for a, _, n, kind in relocs if n in ("_copyin", "_copyout") and kind == 2]
-        if label in ("Legacy", "AirPort"):
+        if label in ("Legacy", "AirPort", "AirPortSequoia"):
             if len(copies) != (14 if label == "Legacy" else 2):
                 raise RuntimeError("Unexpected copy callsite count")
             for address, _ in copies:
                 if image.read(address, 1) != b"\xe8":
                     raise RuntimeError("Expected direct relative call")
                 guards.append((address, image.name(address)))
-        if label == "AirPort":
-            guards += [(0x2C2612, "Tahoe TX trampoline"), (0x2C3D78, "Tahoe RX fill trampoline"), (0x2C4286, "Tahoe RX consume trampoline")]
+        if label.startswith("AirPort"):
+            guards += [(0x2C2612, "TX backend identity"), (0x2C3D78, "RX fill backend identity"), (0x2C4286, "RX consume backend identity")]
         lines.append(f"static const ByteGuard {label}Guards[] = {{")
         for address, _ in guards:
             mask = bytearray([255] * 32)
@@ -110,7 +112,7 @@ def main():
                     mask[offset - address] = 0
             lines.append(f"    {{0x{address:X}, {{{numbers(image.read(address, 32))}}}, {{{numbers(mask)}}}}},")
         lines.append("};")
-        if label in ("Legacy", "AirPort"):
+        if label in ("Legacy", "AirPort", "AirPortSequoia"):
             lines.append(f"static const CopySite {label}CopySites[] = {{")
             for address, output in sorted(copies):
                 lines.append(f"    {{0x{address:X}, {'true' if output else 'false'}}},")
@@ -119,6 +121,20 @@ def main():
         manifest["images"][label] = {"path": str(path.relative_to(ROOT)), "uuid": image.uuid, "sha256": hashlib.sha256(path.read_bytes()).hexdigest(), "guards": [{"address": hex(a), "symbol": n} for a, n in guards], "copySites": [{"address": hex(a), "output": o} for a, o in sorted(copies)]}
         if scalar:
             manifest["images"][label]["scalarGetRequests"] = scalar
+    for label, other in [("AirPort", "AirPortSequoia"), ("AirPortSequoia", "AirPort")]:
+        image, alternative = Image(IMAGES[label]), Image(IMAGES[other])
+        relocs = relocations(image) + relocations(alternative)
+        mismatches = []
+        for guard in manifest["images"][label]["guards"]:
+            address = int(guard["address"], 16)
+            ignored = {offset for start, size, _, _ in relocs
+                       for offset in range(max(start, address), min(start + size, address + 32))}
+            if any(a != b and address + index not in ignored for index, (a, b) in
+                   enumerate(zip(image.read(address, 32), alternative.read(address, 32)))):
+                mismatches.append(hex(address))
+        if len(mismatches) < 5:
+            raise RuntimeError("AirPort backend guards do not distinguish the original and Tahoe payloads")
+        manifest["images"][label]["rejectsOtherBackendAt"] = mismatches
     lines += ["}", "", "#endif", ""]
     outputs = {ROOT / "SimpleBCM/Profiles.hpp": "\n".join(lines), ROOT / "Docs/ABI.json": json.dumps(manifest, indent=2, ensure_ascii=False) + "\n"}
     for path, content in outputs.items():

@@ -76,7 +76,7 @@ PluginConfiguration ADDPR(config) {
     disableArgs, arrsize(disableArgs),
     debugArgs, arrsize(debugArgs),
     nullptr, 0,
-    KernelVersion::Tahoe,
+    KernelVersion::Sequoia,
     KernelVersion::Tahoe,
     initialize
 };

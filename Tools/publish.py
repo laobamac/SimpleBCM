@@ -18,7 +18,27 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
-from package import VERSION, package_name
+from package import VERSION, package_name, variants
+
+
+def release_body(repository, sha):
+    source = f'https://github.com/{repository}/blob/{sha}'
+    return f'''支持 macOS Sequoia 15 和 macOS Tahoe 26，通过 OpenCore 注入恢复 Broadcom Wi-Fi 驱动，无需修改系统卷。
+
+- SimpleBCM 同时支持两个系统；相同构建类型的二进制完全一致，系统包仅区分配套驱动和配置。
+- 每个系统提供 DEBUG 和 RELEASE 包，日常使用请选择对应系统的 RELEASE 包。
+- BCM943224PCIEBT2 已通过用户基本使用测试。安装方法与支持范围见 [README]({source}/README.md)。
+
+<details>
+<summary>English</summary>
+
+Supports macOS Sequoia 15 and macOS Tahoe 26, restoring Broadcom Wi-Fi drivers through OpenCore injection without modifying the system volume.
+
+- SimpleBCM supports both systems. Binaries of the same build type are identical; OS-specific packages differ only in companion drivers and configuration.
+- DEBUG and RELEASE packages are available for each system. Choose the RELEASE package for your macOS version for everyday use.
+- Basic operation with BCM943224PCIEBT2 has been confirmed by the user. See the [README]({source}/README.en.md) for installation and supported configurations.
+
+</details>'''
 
 
 def main():
@@ -28,20 +48,22 @@ def main():
     args = parser.parse_args()
     root = Path(__file__).resolve().parent.parent
     repository = os.environ['GITHUB_REPOSITORY']
-    sha = os.environ['GITHUB_SHA']
+    sha = os.environ['GITHUB_SHA'].lower()
     if not re.fullmatch(r'[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+', repository):
         raise SystemExit('Invalid repository name')
     if not re.fullmatch(r'[0-9a-fA-F]{40}', sha):
         raise SystemExit('Invalid commit SHA')
-    name = package_name(args.channel, sha)
-    archive = root / 'dist' / (name + '.zip')
-    checksum = archive.with_name(archive.name + '.sha256')
-    if not archive.is_file() or not checksum.is_file():
-        raise SystemExit('Release archive or checksum is missing')
-    fields = checksum.read_text().split()
-    if fields != [hashlib.sha256(archive.read_bytes()).hexdigest(), archive.name]:
-        raise SystemExit('Release archive checksum differs')
-    files = [archive, checksum]
+    body = release_body(repository, sha)
+    files = []
+    for system, configuration in variants():
+        name = package_name(system, configuration, args.channel, sha)
+        archive = root / 'dist' / (name + '.zip')
+        checksum = archive.with_name(archive.name + '.sha256')
+        if not archive.is_file() or not checksum.is_file():
+            raise SystemExit(f'Release archive or checksum is missing: {name}')
+        if checksum.read_text().split() != [hashlib.sha256(archive.read_bytes()).hexdigest(), archive.name]:
+            raise SystemExit(f'Release archive checksum differs: {name}')
+        files.append(archive)
     release = None
     if args.channel == 'rel':
         release = json.loads(Path(os.environ['GITHUB_EVENT_PATH']).read_text()).get('release', {})
@@ -52,7 +74,7 @@ def main():
         tag = f'v{VERSION}-alpha'
     if args.dry_run:
         print(json.dumps({'repository': repository, 'tag': tag, 'channel': args.channel,
-                          'assets': [p.name for p in files]}, indent=2))
+                          'body': body, 'assets': [p.name for p in files]}, indent=2))
         return
     token = os.environ['GH_TOKEN']
     api = os.environ.get('GITHUB_API_URL', 'https://api.github.com')
@@ -76,6 +98,7 @@ def main():
         current = request('GET', base + '/releases/' + str(release['id']))
         if current['tag_name'] != tag or current['prerelease'] or current['draft']:
             raise SystemExit('Release state changed during the build')
+        request('PATCH', base + '/releases/' + str(current['id']), {'body': body})
     else:
         encoded = urllib.parse.quote(tag, safe='')
         current = request('GET', base + '/releases/tags/' + encoded, missing=True)
@@ -86,15 +109,7 @@ def main():
             request('PATCH', base + '/git/refs/tags/' + encoded, {'sha': sha, 'force': True})
         else:
             request('POST', base + '/git/refs', {'ref': 'refs/tags/' + tag, 'sha': sha})
-        commits = request('GET', base + f'/commits?sha={sha}&per_page=5')
-        repository_url = os.environ.get('GITHUB_SERVER_URL', 'https://github.com') + '/' + repository
-        changes = []
-        for commit in commits:
-            subject = commit['commit']['message'].splitlines()[0]
-            subject = re.sub(r'([\\`*_{}\[\]<>#|])', r'\\\1', subject)
-            changes.append(f'- [`{commit["sha"][:7]}`]({repository_url}/commit/{commit["sha"]}) {subject}')
-        values = {'tag_name': tag, 'target_commitish': sha, 'name': tag,
-                  'body': 'Development build for macOS Tahoe. Hardware reboot validation is pending.\n\n' + '\n'.join(changes) + '\n',
+        values = {'tag_name': tag, 'target_commitish': sha, 'name': tag, 'body': body,
                   'draft': False, 'prerelease': True, 'make_latest': 'false'}
         if current:
             current = request('PATCH', base + '/releases/' + str(current['id']), values)

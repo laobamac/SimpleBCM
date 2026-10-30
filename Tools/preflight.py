@@ -14,7 +14,7 @@ import plistlib
 import subprocess
 from pathlib import Path
 
-from configure import CONFLICTING_DRIVERS, FIXUP, INJECTOR, drivers
+from configure import AIRPORT_SEQUOIA, AIRPORT_TAHOE, CONFLICTING_DRIVERS, FIXUP, INJECTOR, SYSTEMS, drivers
 
 
 def version(value):
@@ -30,12 +30,12 @@ def enabled(entry, running):
 
 def check_configuration(oc, running, manifest=None):
     issues = []
-    if running[0] != 25:
-        issues.append("要求 macOS Tahoe / Darwin 25.x。")
+    if running[0] not in (24, 25):
+        issues.append("要求 macOS Sequoia 或 Tahoe / Darwin 24.x 或 25.x。")
     config = plistlib.loads((oc / "config.plist").read_bytes())
     entries = [entry for entry in config["Kernel"]["Add"] if enabled(entry, running)]
     use_fixup = any(entry.get("BundlePath") == FIXUP[0] for entry in entries)
-    expected = drivers(use_fixup)
+    expected = drivers(use_fixup, running[0])
     positions = {}
     for bundle, identifier, executable, _ in expected:
         matching = [(i, entry) for i, entry in enumerate(entries) if
@@ -62,18 +62,33 @@ def check_configuration(oc, running, manifest=None):
     ordered = [positions[bundle] for bundle, *_ in expected if bundle in positions]
     if ordered != sorted(ordered):
         issues.append("无线驱动加载顺序不正确，请参考 config.fragment.plist。")
+    identifiers = {identifier: [] for _, identifier, _, _ in expected}
     for entry in entries:
         path = entry.get("BundlePath", "")
-        if Path(path).name in CONFLICTING_DRIVERS:
-            issues.append(f"此项会与 Tahoe AirPort 驱动冲突：{path}")
+        try:
+            info = plistlib.loads((oc / 'Kexts' / path / entry.get('PlistPath', 'Contents/Info.plist')).read_bytes())
+            identifier = info.get('CFBundleIdentifier')
+            if identifier in identifiers:
+                identifiers[identifier].append(path)
+        except (OSError, ValueError, plistlib.InvalidFileException):
+            pass
+        if Path(path).name in CONFLICTING_DRIVERS or (
+                Path(path).name == "AirPortBrcmNIC.kext" and path != AIRPORT_SEQUOIA[0]) or (
+                path in (AIRPORT_SEQUOIA[0], AIRPORT_TAHOE[0]) and path not in {item[0] for item in expected}):
+            issues.append(f"此项与目标系统的 AirPort 后端冲突：{path}")
         if path == INJECTOR[0] and not use_fixup:
             issues.append("NIC Injector 必须与可选 AirportBrcmFixup 一起启用。")
+    for identifier, paths in identifiers.items():
+        if len(paths) > 1:
+            issues.append(f"重复的活动 Bundle ID：{identifier}: {paths}")
     blocks = [entry for entry in config["Kernel"].get("Block", []) if enabled(entry, running)
               and entry.get("Identifier") == "com.apple.iokit.IOSkywalkFamily" and entry.get("Strategy") == "Exclude"]
     if len(blocks) != 1:
         issues.append("需要一项 IOSkywalkFamily / Exclude 屏蔽。")
     if manifest:
         data = json.loads(Path(manifest).read_text())
+        if data.get('system') in SYSTEMS and SYSTEMS[data['system']] != running[0]:
+            issues.append(f"发布包面向 {data['system']}，与目标系统不匹配。")
         active_bundles = {Path(bundle).parts[0] for bundle, *_ in expected if bundle != "Lilu.kext"}
         for relative, digest in data['files'].items():
             if relative.startswith('EFI/OC/Kexts/'):
@@ -90,21 +105,26 @@ def check_configuration(oc, running, manifest=None):
     return issues, use_fixup
 
 
-def check(oc, manifest):
+def check(oc, manifest, target_volume=None):
     build = subprocess.check_output(["sysctl", "-n", "kern.osversion"], text=True).strip()
     kernel = subprocess.check_output(["sysctl", "-n", "kern.osrelease"], text=True).strip()
+    target = Path(target_volume).resolve() if target_volume else Path('/')
+    if target_volume:
+        from kernel_collection import system_version
+        build, kernel = system_version(target)
     issues, use_fixup = check_configuration(oc, version(kernel), manifest)
-    if Path('/System/Library/Extensions/IO80211FamilyLegacy.kext').exists():
+    if (target / 'System/Library/Extensions/IO80211FamilyLegacy.kext').exists():
         issues.append("系统卷已有 Legacy 无线根补丁，会与 EFI 注入的驱动重复。")
-    return dict(build=build, kernel=kernel, airportbrcmfixup=use_fixup, passed=not issues, issues=issues)
+    return dict(build=build, kernel=kernel, targetVolume=str(target), airportbrcmfixup=use_fixup, passed=not issues, issues=issues)
 
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("oc", type=Path, help="待启动 EFI 的 OC 目录")
     parser.add_argument("--manifest", type=Path)
+    parser.add_argument("--target-volume", type=Path, help="只读检查待启动系统卷；省略时检查运行中的系统")
     args = parser.parse_args()
-    result = check(args.oc.resolve(), args.manifest)
+    result = check(args.oc.resolve(), args.manifest, args.target_volume)
     print(json.dumps(result, indent=2, ensure_ascii=False))
     raise SystemExit(0 if result["passed"] else 1)
 

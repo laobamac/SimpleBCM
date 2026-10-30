@@ -1,6 +1,6 @@
 {
   "copyright": "Copyright © 2026 laobamac. All rights reserved.",
-  "supportedKernel": "25.x",
+  "supportedKernel": "24.x / 25.x",
   "images": {
     "Legacy": {
       "path": ".research/binaries/IO80211FamilyLegacy-v1.0.0/IO80211FamilyLegacy.kext/Contents/MacOS/IO80211FamilyLegacy",
@@ -611,6 +611,70 @@
         }
       ]
     },
+    "AirPortSequoia": {
+      "path": ".research/binaries/IO80211FamilyLegacy-v1.0.0/IO80211FamilyLegacy.kext/Contents/PlugIns/AirPortBrcmNIC.kext/Contents/MacOS/AirPortBrcmNIC",
+      "uuid": "e4678feb1dc135cc930648021083d04a",
+      "sha256": "884e90b27cff151e432bb36275936f57b43e72419e95b51b3ac067d3f2ccd331",
+      "guards": [
+        {
+          "address": "0x1affb",
+          "symbol": "_bcm_decode_anqp_nai_realm_print"
+        },
+        {
+          "address": "0x2c1ae8",
+          "symbol": "__dma_detach"
+        },
+        {
+          "address": "0x2c2514",
+          "symbol": "_dma64_txfast"
+        },
+        {
+          "address": "0x2c3b78",
+          "symbol": "__dma_rxfill"
+        },
+        {
+          "address": "0x2c41da",
+          "symbol": "__dma_getnextrxp"
+        },
+        {
+          "address": "0x38538",
+          "symbol": "__ZN15AirPort_BrcmNIC11wlIocCommonEP13apple80211reqP8OSObjectbb+0x70"
+        },
+        {
+          "address": "0x386c6",
+          "symbol": "__ZN15AirPort_BrcmNIC11wlIocCommonEP13apple80211reqP8OSObjectbb+0x1fe"
+        },
+        {
+          "address": "0x2c2612",
+          "symbol": "TX backend identity"
+        },
+        {
+          "address": "0x2c3d78",
+          "symbol": "RX fill backend identity"
+        },
+        {
+          "address": "0x2c4286",
+          "symbol": "RX consume backend identity"
+        }
+      ],
+      "copySites": [
+        {
+          "address": "0x38538",
+          "output": false
+        },
+        {
+          "address": "0x386c6",
+          "output": true
+        }
+      ],
+      "rejectsOtherBackendAt": [
+        "0x1affb",
+        "0x2c1ae8",
+        "0x2c2612",
+        "0x2c3d78",
+        "0x2c4286"
+      ]
+    },
     "AirPort": {
       "path": ".research/binaries/AirPortBrcmNIC-Tahoe-v1.0.0/AirPortBrcmNIC-Tahoe.kext/Contents/MacOS/AirPortBrcmNIC",
       "uuid": "e4678feb1dc135cc930648021083d04a",
@@ -646,15 +710,15 @@
         },
         {
           "address": "0x2c2612",
-          "symbol": "Tahoe TX trampoline"
+          "symbol": "TX backend identity"
         },
         {
           "address": "0x2c3d78",
-          "symbol": "Tahoe RX fill trampoline"
+          "symbol": "RX fill backend identity"
         },
         {
           "address": "0x2c4286",
-          "symbol": "Tahoe RX consume trampoline"
+          "symbol": "RX consume backend identity"
         }
       ],
       "copySites": [
@@ -666,6 +730,13 @@
           "address": "0x386c6",
           "output": true
         }
+      ],
+      "rejectsOtherBackendAt": [
+        "0x1affb",
+        "0x2c1ae8",
+        "0x2c2612",
+        "0x2c3d78",
+        "0x2c4286"
       ]
     }
   }

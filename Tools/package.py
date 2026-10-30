@@ -19,154 +19,226 @@ import tempfile
 import zipfile
 from pathlib import Path
 
-from configure import FIXUP, INJECTOR, fragment, save
-from bootstrap import validate_payloads
-from verify import source_fingerprint
-from macho import Image
+from configure import AIRPORT_SEQUOIA, AIRPORT_TAHOE, FIXUP, INJECTOR, SYSTEMS, fragment, save
 
 
 ROOT = Path(__file__).resolve().parent.parent
 VERSION = "1.0.0"
-NAME = f"SimpleBCM-{VERSION}-Tahoe-x86_64"
+CONFIGURATIONS = ("Debug", "Release")
 
 
-def package_name(channel, sha=None):
-    if channel == "rel":
-        return NAME
-    sha = sha or os.environ.get("GITHUB_SHA") or subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
+def variants():
+    return [(system, configuration) for system in SYSTEMS for configuration in CONFIGURATIONS]
+
+
+def source_revision(sha=None):
+    sha = sha or os.environ.get("GITHUB_SHA") or subprocess.check_output(
+        ["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
     if not re.fullmatch(r"[0-9a-fA-F]{40}", sha):
         raise ValueError("Invalid commit SHA")
-    return f"{NAME}-alpha-{sha[:7]}"
+    return sha.lower()
 
 
-def copy(source, target):
+def package_name(system, configuration, channel, sha=None):
+    if system not in SYSTEMS or configuration not in CONFIGURATIONS or channel not in ("pre", "rel"):
+        raise ValueError("Invalid package variant")
+    name = f"SimpleBCM-{system}-v{VERSION}-{configuration.upper()}"
+    return f"{name}-alpha-{source_revision(sha)[:7]}" if channel == "pre" else name
+
+
+def digest(path):
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
+def copy(source, target, exclude=()):
     target.parent.mkdir(parents=True, exist_ok=True)
     if source.is_dir():
-        shutil.copytree(source, target, ignore=shutil.ignore_patterns(".DS_Store", "__pycache__", "xcuserdata"))
+        shutil.copytree(source, target, ignore=shutil.ignore_patterns(
+            ".DS_Store", "__pycache__", "xcuserdata", *exclude))
     else:
         shutil.copy2(source, target)
+
+
+def validate_builds():
+    from bootstrap import validate_payloads
+    from macho import Image
+    from verify import source_fingerprint
+
+    version = re.search(r"^MODULE_VERSION\s*=\s*(\S+)", (ROOT / "Config/Kernel.xcconfig").read_text(), re.M).group(1)
+    if version != VERSION:
+        raise RuntimeError("驱动版本与打包版本不一致。")
+    validate_payloads()
+    fingerprint, _ = source_fingerprint()
+    lilu_digest = digest(ROOT / "build/Lilu/Release/Lilu.kext/Contents/MacOS/Lilu")
+    reports = {}
+    for configuration in CONFIGURATIONS:
+        report = json.loads((ROOT / f"build/Validation-{configuration}.json").read_text())
+        product = ROOT / f"build/DerivedData/Build/Products/{configuration}"
+        binary = product / "SimpleBCM.kext/Contents/MacOS/SimpleBCM"
+        info = plistlib.loads((binary.parent.parent / "Info.plist").read_bytes())
+        if info["CFBundleVersion"] != VERSION or info["CFBundleShortVersionString"] != VERSION:
+            raise RuntimeError(f"{configuration} 的驱动版本与发行版本不一致。")
+        if report["sourceFingerprint"] != fingerprint or report["sha256"] != digest(binary):
+            raise RuntimeError(f"{configuration} 尚未通过当前源码版本的验证。")
+        if report["liluSHA256"] != lilu_digest or report["driverLoading"] != "external":
+            raise RuntimeError(f"{configuration} 的配套驱动与验证结果不一致。")
+        symbols = product / "SimpleBCM.kext.dSYM/Contents/Resources/DWARF/SimpleBCM"
+        if Image(symbols).uuid != report["uuid"]:
+            raise RuntimeError(f"{configuration} 符号文件与已验证二进制不一致。")
+        reports[configuration] = report
+    analysis = json.loads((ROOT / "build/Analysis-Release.json").read_text())
+    if not analysis["passed"] or analysis["sourceFingerprint"] != fingerprint or \
+            analysis["logSHA256"] != digest(ROOT / "build/analyze-Release.log"):
+        raise RuntimeError("Release 静态分析尚未覆盖当前源码。")
+    return fingerprint, reports
+
+
+def bundle_record(kexts, entry):
+    bundle = kexts / entry["BundlePath"]
+    info = plistlib.loads((bundle / entry["PlistPath"]).read_bytes())
+    if entry["ExecutablePath"] and not (bundle / entry["ExecutablePath"]).is_file():
+        raise RuntimeError(f"缺少 {entry['ExecutablePath']}")
+    return {"path": entry["BundlePath"], "identifier": info["CFBundleIdentifier"], "version": info["CFBundleVersion"],
+            "minKernel": entry["MinKernel"], "maxKernel": entry["MaxKernel"]}
+
+
+def create_package(system, configuration, channel, sha, fingerprint, report, target_report):
+    name = package_name(system, configuration, channel, sha)
+    kernel = SYSTEMS[system]
+    dist = ROOT / "dist"
+    dist.mkdir(exist_ok=True)
+    archive = dist / (name + ".zip")
+    with tempfile.TemporaryDirectory(prefix=".package-", dir=dist) as temporary:
+        stage = Path(temporary) / name
+        extra = stage / "Extra"
+        kexts = stage / "EFI/OC/Kexts"
+        product = ROOT / f"build/DerivedData/Build/Products/{configuration}"
+        copy(product / "SimpleBCM.kext", kexts / "SimpleBCM.kext")
+        copy(ROOT / "build/Lilu/Release/Lilu.kext", kexts / "Lilu.kext")
+        binaries = ROOT / ".research/binaries"
+        copy(binaries / "IOSkywalkFamily-v1.2.0/IOSkywalkFamily.kext", kexts / "IOSkywalkFamily.kext")
+        copy(binaries / "IO80211FamilyLegacy-v1.0.0/IO80211FamilyLegacy.kext", kexts / "IO80211FamilyLegacy.kext",
+             exclude=("PlugIns",) if system == "Tahoe" else ())
+        if system == "Tahoe":
+            copy(binaries / "AirPortBrcmNIC-Tahoe-v1.0.0/AirPortBrcmNIC-Tahoe.kext", kexts / "AirPortBrcmNIC-Tahoe.kext")
+        optional = extra / "Optional"
+        copy(binaries / "AirportBrcmFixup-v2.2.1-RELEASE/AirportBrcmFixup.kext", optional / "AirportBrcmFixup.kext",
+             exclude=("AirPortBrcm4360_Injector.kext",))
+        copy(product / "SimpleBCM.kext.dSYM", extra / "Symbols/SimpleBCM.kext.dSYM")
+        copy(product / "bcmprobe", extra / "bcmprobe")
+        for prefix in ["Validation", "DependencySymbols"]:
+            filename = f"{prefix}-{configuration}.json"
+            copy(ROOT / "build" / filename, extra / filename)
+            if target_report:
+                filename = f"{prefix}-Sequoia-{configuration}.json"
+                copy(ROOT / "build" / filename, extra / filename)
+        for filename in ["Analysis-Release.json", "analyze-Release.log", "Lilu-build.json"]:
+            copy(ROOT / "build" / filename, extra / filename)
+        for filename in ["README.md", "README.en.md", "NOTICE.md", "Docs"]:
+            copy(ROOT / filename, extra / filename)
+        for filename in ["configure.py", "preflight.py", "kernel_collection.py", "collect.py"]:
+            copy(ROOT / "Tools" / filename, extra / "Tools" / filename)
+        for filename, relative in {
+            "Lilu-LICENSE.txt": ".research/Lilu/LICENSE.txt",
+            "OCLP-LICENSE.txt": ".research/OpenCore-Legacy-Patcher/LICENSE.txt",
+            "MacKernelSDK-LICENSE.txt": ".research/MacKernelSDK/LICENSE.txt",
+        }.items():
+            copy(ROOT / relative, extra / "Licenses" / filename)
+        config = fragment(kernel=kernel)
+        optional_config = fragment(airportbrcmfixup=True, kernel=kernel)
+        save(stage / "config.fragment.plist", config)
+        save(optional / "config.AirportBrcmFixup.fragment.plist", optional_config)
+        bundles = [bundle_record(kexts, entry) for entry in config["Kernel"]["Add"]]
+        optional_bundles = [bundle_record(optional, entry) for entry in optional_config["Kernel"]["Add"]
+                            if entry["BundlePath"] in (FIXUP[0], INJECTOR[0])]
+        manifest = {
+            "copyright": "Copyright © 2026 laobamac. All rights reserved.",
+            "project": "SimpleBCM", "version": VERSION, "system": system, "kernel": f"{kernel}.x",
+            "configuration": configuration, "architecture": "x86_64", "channel": channel,
+            "sourceRevision": sha, "sourceFingerprint": fingerprint,
+            "driverSupportedKernels": ["24.x", "25.x"], "driverSHA256": report["sha256"],
+            "driverLoading": "external", "hardwareValidation": "pending",
+            "validationEnvironment": {"OSBuild": report["OSBuild"], "validationMode": report["validationMode"]},
+            "targetValidations": [target_report] if target_report else [],
+            "bundles": bundles, "optionalBundles": optional_bundles,
+            "files": {str(path.relative_to(stage)): digest(path) for path in sorted(stage.rglob("*")) if path.is_file()},
+        }
+        (extra / "manifest.json").write_text(json.dumps(manifest, indent=2, ensure_ascii=False) + "\n")
+        packed = Path(temporary) / archive.name
+        with zipfile.ZipFile(packed, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as output:
+            for path in sorted(stage.rglob("*")):
+                if path.is_file():
+                    output.write(path, str(Path(name) / path.relative_to(stage)))
+        packed.replace(archive)
+    archive.with_name(archive.name + ".sha256").write_text(f"{digest(archive)}  {archive.name}\n")
+    return archive
+
+
+def verify_package(archive, system, configuration, channel, sha):
+    name = package_name(system, configuration, channel, sha)
+    if archive.name != name + ".zip":
+        raise RuntimeError("Unexpected archive name")
+    if archive.with_name(archive.name + ".sha256").read_text().split() != [digest(archive), archive.name]:
+        raise RuntimeError(f"Archive SHA-256 differs: {archive}")
+    with zipfile.ZipFile(archive) as bundle:
+        if bundle.testzip() is not None:
+            raise RuntimeError(f"Invalid archive: {archive}")
+        names = bundle.namelist()
+        assert all(path.startswith(name + "/") and ".." not in Path(path).parts for path in names)
+        paths = {path.removeprefix(name + "/") for path in names}
+        manifest = json.loads(bundle.read(name + "/Extra/manifest.json"))
+        assert manifest["system"] == system and manifest["configuration"] == configuration
+        assert manifest["channel"] == channel and manifest["sourceRevision"] == sha
+        assert manifest["version"] == VERSION and manifest["driverSupportedKernels"] == ["24.x", "25.x"]
+        assert {path.split('/')[0] for path in paths} == {"EFI", "Extra", "config.fragment.plist"}
+        assert paths == set(manifest["files"]) | {"Extra/manifest.json"} and len(paths) == len(names)
+        assert not any(path.startswith("Extra/Sources/") or "/__pycache__/" in path for path in paths)
+        for relative, expected in manifest["files"].items():
+            assert hashlib.sha256(bundle.read(name + "/" + relative)).hexdigest() == expected, relative
+        binary = "EFI/OC/Kexts/SimpleBCM.kext/Contents/MacOS/SimpleBCM"
+        assert manifest["files"][binary] == manifest["driverSHA256"]
+        info = plistlib.loads(bundle.read(name + "/EFI/OC/Kexts/SimpleBCM.kext/Contents/Info.plist"))
+        assert info["CFBundleVersion"] == VERSION
+        config = plistlib.loads(bundle.read(name + "/config.fragment.plist"))
+        assert config == fragment(kernel=SYSTEMS[system])
+        optional = plistlib.loads(bundle.read(name + "/Extra/Optional/config.AirportBrcmFixup.fragment.plist"))
+        assert optional == fragment(True, SYSTEMS[system])
+        assert len(manifest["bundles"]) == 5 and len(manifest["optionalBundles"]) == 2
+        selected = AIRPORT_SEQUOIA if system == "Sequoia" else AIRPORT_TAHOE
+        other = AIRPORT_TAHOE if system == "Sequoia" else AIRPORT_SEQUOIA
+        assert any(entry["BundlePath"] == selected[0] for entry in config["Kernel"]["Add"])
+        assert not any(path.startswith("EFI/OC/Kexts/" + other[0] + "/") for path in paths)
+        for entry in config["Kernel"]["Add"]:
+            prefix = "EFI/OC/Kexts/" + entry["BundlePath"] + "/"
+            assert prefix + entry["PlistPath"] in paths
+            assert not entry["ExecutablePath"] or prefix + entry["ExecutablePath"] in paths
+    return manifest
 
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--channel", choices=["pre", "rel"], default="rel")
+    parser.add_argument("--target-volume", type=Path, help="附带 Sequoia 24H23 系统卷静态验证")
+    parser.add_argument("--verify", action="store_true", help="只验证已有的四个发布包")
     args = parser.parse_args()
-    package_label = package_name(args.channel)
-    configured_version = re.search(r"^MODULE_VERSION\s*=\s*(\S+)", (ROOT / "Config/Kernel.xcconfig").read_text(), re.M).group(1)
-    if configured_version != VERSION:
-        raise RuntimeError("驱动版本与打包版本不一致。")
-    validate_payloads()
-    fingerprint, _ = source_fingerprint()
-    lilu = ROOT / "build/Lilu/Release/Lilu.kext/Contents/MacOS/Lilu"
-    lilu_digest = hashlib.sha256(lilu.read_bytes()).hexdigest()
-    validation_mode = None
-    for configuration in ["Debug", "Release"]:
-        info = json.loads((ROOT / f"build/Validation-{configuration}.json").read_text())
-        binary = ROOT / f"build/DerivedData/Build/Products/{configuration}/SimpleBCM.kext/Contents/MacOS/SimpleBCM"
-        bundle_info = plistlib.loads((binary.parent.parent / "Info.plist").read_bytes())
-        if bundle_info["CFBundleVersion"] != VERSION or bundle_info["CFBundleShortVersionString"] != VERSION:
-            raise RuntimeError(f"{configuration} 的驱动版本与发行版本不一致。")
-        if info["sourceFingerprint"] != fingerprint or info["sha256"] != hashlib.sha256(binary.read_bytes()).hexdigest():
-            raise RuntimeError(f"{configuration} 尚未通过当前源码版本的验证。")
-        if info["liluSHA256"] != lilu_digest:
-            raise RuntimeError(f"Lilu 与 {configuration} 验证使用的二进制不一致。")
-        if info["driverLoading"] != "external":
-            raise RuntimeError(f"{configuration} 不是独立驱动构建。")
-        if validation_mode and validation_mode != info["validationMode"]:
-            raise RuntimeError("Debug 和 Release 的验证模式不一致。")
-        validation_mode = info["validationMode"]
-        symbols = ROOT / f"build/DerivedData/Build/Products/{configuration}/SimpleBCM.kext.dSYM/Contents/Resources/DWARF/SimpleBCM"
-        if Image(symbols).uuid != info["uuid"]:
-            raise RuntimeError(f"{configuration} 符号文件与已验证二进制不一致。")
-    validation_environment = {"OSBuild": info["OSBuild"], "validationMode": validation_mode}
-    analysis = ROOT / "build/analyze-Release.log"
-    analysis_report = json.loads((ROOT / "build/Analysis-Release.json").read_text())
-    if not analysis_report["passed"] or analysis_report["sourceFingerprint"] != fingerprint or \
-            analysis_report["logSHA256"] != hashlib.sha256(analysis.read_bytes()).hexdigest():
-        raise RuntimeError("Release 静态分析尚未覆盖当前源码。")
-    dist = ROOT / "dist"
-    dist.mkdir(exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix=".package-", dir=dist) as temporary:
-        stage = Path(temporary) / package_label
-        stage.mkdir()
-        extra = stage / "Extra"
-        kexts = stage / "EFI/OC/Kexts"
-        copy(ROOT / "build/DerivedData/Build/Products/Release/SimpleBCM.kext", kexts / "SimpleBCM.kext")
-        copy(ROOT / "build/Lilu/Release/Lilu.kext", kexts / "Lilu.kext")
-        for name, relative in {
-            "IOSkywalkFamily.kext": "IOSkywalkFamily-v1.2.0/IOSkywalkFamily.kext",
-            "IO80211FamilyLegacy.kext": "IO80211FamilyLegacy-v1.0.0/IO80211FamilyLegacy.kext",
-            "AirPortBrcmNIC-Tahoe.kext": "AirPortBrcmNIC-Tahoe-v1.0.0/AirPortBrcmNIC-Tahoe.kext",
-        }.items():
-            copy(ROOT / ".research/binaries" / relative, kexts / name)
-        old_plugin = kexts / "IO80211FamilyLegacy.kext/Contents/PlugIns"
-        if old_plugin.exists():
-            shutil.rmtree(old_plugin)
-        optional = extra / "Optional/AirportBrcmFixup.kext"
-        copy(ROOT / ".research/binaries/AirportBrcmFixup-v2.2.1-RELEASE/AirportBrcmFixup.kext", optional)
-        old_injector = optional / "Contents/PlugIns/AirPortBrcm4360_Injector.kext"
-        if old_injector.exists():
-            shutil.rmtree(old_injector)
-        for configuration in ["Debug", "Release"]:
-            copy(ROOT / f"build/DerivedData/Build/Products/{configuration}/SimpleBCM.kext", stage / configuration / "SimpleBCM.kext")
-            copy(ROOT / f"build/DerivedData/Build/Products/{configuration}/SimpleBCM.kext.dSYM", extra / f"Symbols/{configuration}/SimpleBCM.kext.dSYM")
-            copy(ROOT / f"build/Validation-{configuration}.json", extra / f"Validation-{configuration}.json")
-            copy(ROOT / f"build/DependencySymbols-{configuration}.json", extra / f"DependencySymbols-{configuration}.json")
-        copy(analysis, extra / "Analysis-Release.log")
-        copy(ROOT / "build/Analysis-Release.json", extra / "Analysis-Release.json")
-        copy(ROOT / "build/Lilu-build.json", extra / "Lilu-build.json")
-        copy(ROOT / "build/DerivedData/Build/Products/Release/bcmprobe", extra / "bcmprobe")
-        for name in ["README.md", "README.en.md", "NOTICE.md"]:
-            copy(ROOT / name, extra / name)
-        copy(ROOT / "Docs", extra / "Docs")
-        for path in ["SimpleBCM", "SimpleBCM.xcodeproj", "Config", "Probe", "Tools", "README.md", "README.en.md", "NOTICE.md", "Docs", ".github", ".gitignore"]:
-            copy(ROOT / path, extra / "Sources" / path)
-        for name in ["configure.py", "preflight.py", "collect.py"]:
-            copy(ROOT / "Tools" / name, extra / "Tools" / name)
-        for name, path in {"Lilu-LICENSE.txt": ".research/Lilu/LICENSE.txt", "OCLP-LICENSE.txt": ".research/OpenCore-Legacy-Patcher/LICENSE.txt",
-                           "MacKernelSDK-LICENSE.txt": ".research/MacKernelSDK/LICENSE.txt"}.items():
-            source = ROOT / path
-            if source.is_file():
-                copy(source, extra / "Licenses" / name)
-        save(stage / "config.fragment.plist", fragment())
-        save(extra / "Optional/config.AirportBrcmFixup.fragment.plist", fragment(airportbrcmfixup=True))
-        dependencies = []
-        for entry in fragment()["Kernel"]["Add"]:
-            bundle = kexts / entry["BundlePath"]
-            info = plistlib.loads((bundle / entry["PlistPath"]).read_bytes())
-            dependencies.append({"path": entry["BundlePath"], "identifier": info["CFBundleIdentifier"], "version": info["CFBundleVersion"]})
-            if entry["ExecutablePath"] and not (bundle / entry["ExecutablePath"]).is_file():
-                raise RuntimeError(f"缺少 {entry['ExecutablePath']}")
-        optional_dependencies = []
-        for bundle_path, identifier, _, _ in [FIXUP, INJECTOR]:
-            info = plistlib.loads((extra / "Optional" / bundle_path / "Contents/Info.plist").read_bytes())
-            optional_dependencies.append({"path": "Extra/Optional/" + bundle_path, "identifier": identifier, "version": info["CFBundleVersion"]})
-        manifest = {"copyright": "Copyright © 2026 laobamac. All rights reserved.", "project": "SimpleBCM", "version": VERSION,
-                    "system": "macOS Tahoe", "kernel": "25.x", "architecture": "x86_64", "hardwareValidation": "pending",
-                    "validationEnvironment": validation_environment, "driverLoading": "external", "channel": args.channel,
-                    "optionalBundles": optional_dependencies,
-                    "sourceFingerprint": fingerprint, "bundles": dependencies, "files": {}}
-        for path in sorted(stage.rglob("*")):
-            if path.is_file():
-                manifest["files"][str(path.relative_to(stage))] = hashlib.sha256(path.read_bytes()).hexdigest()
-        (extra / "manifest.json").write_text(json.dumps(manifest, indent=2, ensure_ascii=False) + "\n")
-        destination = dist / package_label
-        if destination.exists():
-            previous = destination / "Extra/manifest.json"
-            if not previous.is_file():
-                previous = destination / "manifest.json"
-            if not previous.is_file() or json.loads(previous.read_text()).get("project") != "SimpleBCM":
-                raise FileExistsError(destination)
-            shutil.rmtree(destination)
-        shutil.move(str(stage), destination)
-    archive = dist / (package_label + ".zip")
-    with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as output:
-        for path in sorted(destination.rglob("*")):
-            if path.is_file():
-                output.write(path, str(Path(package_label) / path.relative_to(destination)))
-    digest = hashlib.sha256(archive.read_bytes()).hexdigest()
-    (dist / (archive.name + ".sha256")).write_text(f"{digest}  {archive.name}\n")
-    print(f"{archive}\nSHA-256 {digest}")
+    sha = source_revision()
+    if not args.verify:
+        fingerprint, reports = validate_builds()
+        target_reports = {}
+        if args.target_volume:
+            from audit_target import validate
+            target_reports = {configuration: validate(args.target_volume, configuration) for configuration in CONFIGURATIONS}
+        for system, configuration in variants():
+            create_package(system, configuration, args.channel, sha, fingerprint, reports[configuration],
+                           target_reports.get(configuration) if system == "Sequoia" else None)
+    binaries = {}
+    for system, configuration in variants():
+        archive = ROOT / "dist" / (package_name(system, configuration, args.channel, sha) + ".zip")
+        manifest = verify_package(archive, system, configuration, args.channel, sha)
+        previous = binaries.setdefault(configuration, manifest["driverSHA256"])
+        assert previous == manifest["driverSHA256"], "SimpleBCM must be identical across the two system packages"
+        print(archive)
+    print("四个包及全部文件哈希通过验证；同一构建类型的 SimpleBCM 跨系统字节一致。")
 
 
 if __name__ == "__main__":
