@@ -21,7 +21,7 @@ from profiles import IMAGES, SYMBOLS
 
 OUTPUT = ROOT / 'build/Embedded'
 LABELS = ['Skywalk', 'Legacy', 'AirPortOriginal', 'AirPort']
-VERSION = '2.0.0d2'
+VERSION = '1.0.1'
 ALIASES = {
     '__ZN26IOSkywalkEthernetInterface18getHardwareAddressEP12ether_addr_t':
         '__ZN26IOSkywalkEthernetInterface18getHardwareAddressEP10ether_addr',

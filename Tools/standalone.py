@@ -10,7 +10,9 @@
 import argparse
 import hashlib
 import json
+import os
 import plistlib
+import re
 import shutil
 import struct
 import subprocess
@@ -24,6 +26,22 @@ from embed import ALIASES, LABELS, OUTPUT, VERSION, parse
 from kernel_collection import KernelCollection
 from macho import Image
 from profiles import IMAGES
+
+
+CONFIGURATIONS = ('Debug', 'Release')
+
+
+def package_name(configuration, channel='rel', sha=None):
+    if configuration not in CONFIGURATIONS or channel not in ('pre', 'rel'):
+        raise ValueError('Invalid package variant')
+    name = f'SimpleBCM-v{VERSION}-{configuration.upper()}'
+    if channel == 'rel':
+        return name
+    sha = sha or os.environ.get('GITHUB_SHA') or subprocess.check_output(
+        ['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip()
+    if not re.fullmatch(r'[0-9a-fA-F]{40}', sha):
+        raise ValueError('Invalid commit SHA')
+    return f'{name}-alpha-{sha[:7].lower()}'
 
 
 HOST = r'''
@@ -298,7 +316,7 @@ def build(configuration, analyze=False):
             'payloadManifestSHA256': digest(OUTPUT / 'manifest.json')}, indent=2) + '\n')
 
 
-def package(configuration):
+def package(configuration, channel='rel'):
     report = json.loads((ROOT / f'build/Standalone-Validation-{configuration}.json').read_text())
     product = ROOT / f'build/Standalone/Build/Products/{configuration}'
     assert report['sourceFingerprint'] == fingerprint()
@@ -306,7 +324,7 @@ def package(configuration):
     analysis = json.loads((ROOT / 'build/Standalone-Analysis-Release.json').read_text())
     assert analysis['passed'] and analysis['sourceFingerprint'] == fingerprint()
     assert analysis['logSHA256'] == digest(ROOT / 'build/standalone-analyze-Release.log')
-    name = f'SimpleBCM-v{VERSION}-{configuration.upper()}'
+    name = package_name(configuration, channel)
     dist = ROOT / 'dist'
     dist.mkdir(exist_ok=True)
     with tempfile.TemporaryDirectory(prefix='.standalone-', dir=dist) as temporary:
@@ -344,6 +362,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('action', choices=['build', 'verify', 'analyze', 'package'])
     parser.add_argument('--configuration', choices=['Debug', 'Release'], default='Debug')
+    parser.add_argument('--channel', choices=['pre', 'rel'], default='rel')
     parser.add_argument('--target-volume', type=Path, action='append')
     args = parser.parse_args()
     if args.action in ['build', 'analyze']:
@@ -351,7 +370,7 @@ def main():
     if args.action in ['verify', 'build']:
         verify(args.configuration, args.target_volume or [Path('/')])
     if args.action == 'package':
-        package(args.configuration)
+        package(args.configuration, args.channel)
 
 
 if __name__ == '__main__':

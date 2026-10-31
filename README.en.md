@@ -9,7 +9,7 @@
 
 # SimpleBCM
 
-![Version](https://img.shields.io/badge/version-2.0.0d2-2563eb)
+![Version](https://img.shields.io/badge/version-1.0.1-2563eb)
 ![macOS](https://img.shields.io/badge/macOS-Sonoma%2014%20%7C%20Sequoia%2015%20%7C%20Tahoe%2026-111827)
 ![Architecture](https://img.shields.io/badge/arch-x86__64-6b7280)
 ![OpenCore](https://img.shields.io/badge/boot-OpenCore-16a34a)

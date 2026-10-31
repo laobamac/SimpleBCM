@@ -18,7 +18,7 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
-from package import VERSION, package_name, variants
+from standalone import CONFIGURATIONS, VERSION, package_name
 
 
 def prerelease_body(repository, commits):
@@ -31,22 +31,21 @@ def prerelease_body(repository, commits):
     return 'Development build for macOS Sonoma, macOS Sequoia and macOS Tahoe.\n\n' + '\n'.join(changes) + '\n'
 
 
-def release_body(repository, sha):
-    source = f'https://github.com/{repository}/blob/{sha}'
-    return f'''支持 macOS Sonoma 14、macOS Sequoia 15 和 macOS Tahoe 26，通过 OpenCore 注入恢复 Broadcom Wi-Fi 驱动，无需修改系统卷。
+def release_body():
+    return '''支持 macOS Sonoma 14、macOS Sequoia 15 和 macOS Tahoe 26，通过 OpenCore 注入恢复 Broadcom Wi-Fi 驱动，无需修改系统卷。
 
-- SimpleBCM 同时支持三个系统；相同构建类型的二进制完全一致，系统包仅区分配套驱动和配置。
-- 每个系统提供 DEBUG 和 RELEASE 包，日常使用请选择对应系统的 RELEASE 包。
-- 本版新增 Sonoma ABI 适配。安装方法与支持范围见 [README]({source}/README.md)。
+- 所需 Apple 驱动已内置于 SimpleBCM，自动管理加载顺序，三个系统使用同一套包。
+- **必须启用 IOSkywalkFamily 的 Block：`Identifier=com.apple.iokit.IOSkywalkFamily`、`Strategy=Exclude`、`Enabled=true`。**
+- 提供 DEBUG 和 RELEASE 包，日常使用请选择 RELEASE 包。AirportBrcmFixup 仍由需要的用户自行加载。
 
 <details>
 <summary>English</summary>
 
 Supports macOS Sonoma 14, macOS Sequoia 15 and macOS Tahoe 26, restoring Broadcom Wi-Fi drivers through OpenCore injection without modifying the system volume.
 
-- SimpleBCM supports all three systems. Binaries of the same build type are identical; OS-specific packages differ only in companion drivers and configuration.
-- DEBUG and RELEASE packages are available for each system. Choose the RELEASE package for your macOS version for everyday use.
-- This release adds Sonoma ABI support. See the [README]({source}/README.en.md) for installation and supported configurations.
+- The required Apple drivers are embedded in SimpleBCM with automatic load ordering. The same packages serve all three systems.
+- **The IOSkywalkFamily Block is required: `Identifier=com.apple.iokit.IOSkywalkFamily`, `Strategy=Exclude`, `Enabled=true`.**
+- DEBUG and RELEASE packages are available. Choose RELEASE for everyday use. Supply AirportBrcmFixup separately if needed.
 
 </details>'''
 
@@ -63,17 +62,17 @@ def main():
         raise SystemExit('Invalid repository name')
     if not re.fullmatch(r'[0-9a-fA-F]{40}', sha):
         raise SystemExit('Invalid commit SHA')
-    body = release_body(repository, sha) if args.channel == 'rel' else None
+    body = release_body() if args.channel == 'rel' else None
     files = []
-    for system, configuration in variants():
-        name = package_name(system, configuration, args.channel, sha)
+    for configuration in CONFIGURATIONS:
+        name = package_name(configuration, args.channel, sha)
         archive = root / 'dist' / (name + '.zip')
         checksum = archive.with_name(archive.name + '.sha256')
         if not archive.is_file() or not checksum.is_file():
             raise SystemExit(f'Release archive or checksum is missing: {name}')
         if checksum.read_text().split() != [hashlib.sha256(archive.read_bytes()).hexdigest(), archive.name]:
             raise SystemExit(f'Release archive checksum differs: {name}')
-        files.append(archive)
+        files.extend((archive, checksum))
     release = None
     if args.channel == 'rel':
         release = json.loads(Path(os.environ['GITHUB_EVENT_PATH']).read_text()).get('release', {})
@@ -130,7 +129,6 @@ def main():
     subprocess.run(['gh', 'release', 'upload', tag, *(str(p) for p in files), '--repo', repository, '--clobber'], check=True)
     if args.channel == 'pre':
         keep = {p.name for p in files}
-        # Only replace stale assets on this version's managed Alpha release.
         page = 1
         stale = []
         while True:
@@ -141,6 +139,17 @@ def main():
             page += 1
         for identifier in stale:
             request('DELETE', base + '/releases/assets/' + str(identifier))
+        page = 1
+        stale_releases = []
+        while True:
+            releases = request('GET', base + f'/releases?per_page=100&page={page}')
+            stale_releases.extend(item['id'] for item in releases
+                                  if item['prerelease'] and not item['draft'] and item['id'] != current['id'])
+            if len(releases) < 100:
+                break
+            page += 1
+        for identifier in stale_releases:
+            request('DELETE', base + '/releases/' + str(identifier))
     print(f'Published {tag}: ' + ', '.join(p.name for p in files))
 
 
