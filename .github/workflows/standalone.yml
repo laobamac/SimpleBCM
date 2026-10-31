@@ -1,0 +1,46 @@
+#
+#  standalone.yml
+#  SimpleBCM
+#
+#  Created by laobamac on 2026/11/1.
+#  Copyright © 2026 laobamac. All rights reserved.
+#
+name: Standalone development build
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  standalone:
+    runs-on: macos-26-intel
+    timeout-minutes: 30
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Prepare pinned dependencies
+        run: python3 Tools/bootstrap.py --standalone
+      - name: Build and verify Debug
+        run: python3 Tools/standalone.py build --configuration Debug
+      - name: Build and verify Release
+        run: python3 Tools/standalone.py build --configuration Release
+      - name: Analyze Release
+        run: python3 Tools/standalone.py analyze --configuration Release
+      - name: Package
+        run: |
+          python3 Tools/standalone.py package --configuration Debug
+          python3 Tools/standalone.py package --configuration Release
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: SimpleBCM-Standalone
+          path: |
+            dist/SimpleBCM-v*.zip
+            dist/SimpleBCM-v*.zip.sha256
+          if-no-files-found: error

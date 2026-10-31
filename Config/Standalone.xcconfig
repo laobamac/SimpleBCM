@@ -1,0 +1,14 @@
+//
+//  Standalone.xcconfig
+//  SimpleBCM
+//
+//  Created by laobamac on 2026/11/1.
+//  Copyright © 2026 laobamac. All rights reserved.
+//
+
+#include "Kernel.xcconfig"
+HEADER_SEARCH_PATHS = $(PROJECT_DIR)/Standalone $(PROJECT_DIR)/SimpleBCM
+GCC_PREPROCESSOR_DEFINITIONS = $(inherited) SIMPLEBCM_EMBEDDED=1
+MODULE_VERSION = 2.0.0d2
+INFOPLIST_FILE = Standalone/Info.plist
+ENABLE_USER_SCRIPT_SANDBOXING = NO

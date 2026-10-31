@@ -9,7 +9,7 @@
 
 # SimpleBCM
 
-![Version](https://img.shields.io/badge/version-1.0.1-2563eb)
+![Version](https://img.shields.io/badge/version-2.0.0d2-2563eb)
 ![macOS](https://img.shields.io/badge/macOS-Sonoma%2014%20%7C%20Sequoia%2015%20%7C%20Tahoe%2026-111827)
 ![Architecture](https://img.shields.io/badge/arch-x86__64-6b7280)
 ![OpenCore](https://img.shields.io/badge/boot-OpenCore-16a34a)
@@ -18,37 +18,36 @@
 
 </div>
 
-通过 OpenCore 注入恢复 Broadcom Wi-Fi，不修改系统卷。支持 Intel 平台的 macOS Sonoma 14、Sequoia 15 和 Tahoe 26，依赖 Lilu ≥ 1.7.1。
-
 ## 安装
 
-1. 下载对应系统的 [RELEASE 包](https://github.com/laobamac/SimpleBCM/releases)。
-2. 将包内驱动合入 `EFI/OC/Kexts`，保留完整目录结构；Lilu 只启用一份。
-3. 合入 `config.fragment.plist`，其中已包含 `IOSkywalkFamily` 的 `Kernel → Block → Exclude` 配置。
-4. 用当前 OpenCore 配套的 `ocvalidate` 检查完整配置，然后重启。
+1. 将 `SimpleBCM.kext` 放入 `EFI/OC/Kexts`，替换旧版本。
+2. 禁用 IOSkywalkFamily、IO80211FamilyLegacy、AirPortBrcmNIC 的独立 Add 项。
+3. 合入包内 `config.fragment.plist`，用 `ocvalidate` 检查后重启。
 
-加载顺序：**Lilu → SimpleBCM → IOSkywalkFamily → IO80211FamilyLegacy → AirPortBrcmNIC**。
+**必须启用 `Kernel → Block`：`Identifier=com.apple.iokit.IOSkywalkFamily`、`Strategy=Exclude`、`Enabled=true`。**
 
-BCM943224 等旧卡另需将 `Extra/Optional/AirportBrcmFixup.kext` 复制到 `EFI/OC/Kexts`，并改用 `Extra/Optional/config.AirportBrcmFixup.fragment.plist`。
+需要 AirportBrcmFixup 时，按 `Extra/config.AirportBrcmFixup.fragment.plist` 添加 Lilu、AirportBrcmFixup 和 AirPortBrcmNIC_Injector。
 
-## 排查问题
+## 调试
 
-使用 DEBUG 包并添加 `-simplebcmdbg` 开启日志；`-simplebcmoff` 可停用驱动。在解压包根目录执行：
+使用 DEBUG 包，添加启动参数 `-simplebcmdbg`，在解压目录运行：
 
 ```sh
 ./Extra/bcmprobe
-python3 Extra/Tools/collect.py
+python3 Extra/collect.py
 ```
 
 ## 构建
 
-需要完整 Xcode、Git 和 Python 3。
-
 ```sh
-python3 Tools/build.py --configuration Debug
-python3 Tools/build.py --configuration Release
-python3 Tools/build.py --configuration Release --analyze
-python3 Tools/package.py
+python3 Tools/bootstrap.py --standalone
+python3 Tools/standalone.py build --configuration Debug
+python3 Tools/standalone.py build --configuration Release
+python3 Tools/standalone.py analyze --configuration Release
+python3 Tools/standalone.py package --configuration Debug
+python3 Tools/standalone.py package --configuration Release
 ```
 
-第三方组件、致谢及许可见 [NOTICE](NOTICE.md)。
+Xcode 工程：`SimpleBCMStandalone.xcodeproj`。产物目录：`dist`。
+
+[第三方许可](NOTICE.md)

@@ -7,6 +7,7 @@
 #  Copyright © 2026 laobamac. All rights reserved.
 #
 
+import argparse
 import hashlib
 import subprocess
 import zipfile
@@ -37,8 +38,10 @@ def git(folder, *args):
     return subprocess.check_output(["git", "-C", str(folder), *args], text=True).strip()
 
 
-def validate_payloads(extract=False):
+def validate_payloads(extract=False, include_optional=True):
     for relative, digest in ARCHIVES.items():
+        if not include_optional and relative.startswith('Acidanthera/'):
+            continue
         archive = ROOT / ".research/OpenCore-Legacy-Patcher/payloads/Kexts" / relative
         if hashlib.sha256(archive.read_bytes()).hexdigest() != digest:
             raise RuntimeError(f"归档校验失败：{archive}")
@@ -59,9 +62,16 @@ def validate_payloads(extract=False):
 
 
 def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--standalone', action='store_true')
+    args = parser.parse_args()
     research = ROOT / ".research"
     research.mkdir(exist_ok=True)
     for name, (url, revision, sparse) in REPOSITORIES.items():
+        if args.standalone and name == 'Lilu':
+            continue
+        if args.standalone:
+            sparse = [entry for entry in sparse if '/Acidanthera/' not in entry]
         path = research / name
         if not path.exists():
             print(f"获取构建所需上游：{url} @ {revision}", flush=True)
@@ -74,8 +84,8 @@ def main():
         if git(path, "status", "--porcelain", "--untracked-files=no"):
             raise RuntimeError(f"上游工作树已修改：{path}")
         subprocess.run(["git", "-C", str(path), "sparse-checkout", "set", "--no-cone", "--stdin"], input="\n".join(sparse), text=True, check=True)
-    validate_payloads(extract=True)
-    print("上游提交、四个驱动归档及解包文件的逐字节校验通过。")
+    validate_payloads(extract=True, include_optional=not args.standalone)
+    print("所需上游提交、驱动归档及解包文件的逐字节校验通过。")
 
 
 if __name__ == "__main__":

@@ -9,8 +9,10 @@
 #include "Bridge.hpp"
 #include "Profiles.hpp"
 #include "UserClient.hpp"
+#ifndef SIMPLEBCM_EMBEDDED
 #include <Headers/kern_api.hpp>
 #include <Headers/kern_mach.hpp>
+#endif
 #include <IOKit/IOLib.h>
 #include <IOKit/IOWorkLoop.h>
 #include <libkern/c++/OSData.h>
@@ -552,17 +554,44 @@ static bool patchCopies(KernelPatcher &patcher, mach_vm_address_t address, size_
         if (followBranch(call + 5 + old) != followBranch(site.output ? output : input))
             return false;
         auto target = site.output ? reinterpret_cast<mach_vm_address_t>(bridgeCopyOut) : reinterpret_cast<mach_vm_address_t>(bridgeCopyIn);
+#ifdef SIMPLEBCM_EMBEDDED
+        target = patcher.branchTarget(target, call + 5);
+        if (!target)
+            return false;
+#endif
         auto delta = static_cast<int64_t>(target - (call + 5));
         if (delta < INT32_MIN || delta > INT32_MAX)
             return false;
         offsets[i] = static_cast<int32_t>(delta);
     }
+#ifndef SIMPLEBCM_EMBEDDED
     if (MachInfo::setKernelWriting(true, KernelPatcher::kernelWriteLock) != KERN_SUCCESS)
         return false;
+#endif
     for (size_t i = 0; i < count; ++i)
         memcpy(reinterpret_cast<void *>(address + sites[i].offset + 1), &offsets[i], sizeof(offsets[i]));
+#ifdef SIMPLEBCM_EMBEDDED
+    return true;
+#else
     return MachInfo::setKernelWriting(false, KernelPatcher::kernelWriteLock) == KERN_SUCCESS;
+#endif
 }
+
+#ifdef SIMPLEBCM_EMBEDDED
+void Bridge::disable(const char *reason) {
+    reject(reason);
+}
+
+bool Bridge::prepareImage(LinkedImage &image, size_t index) {
+    if (index >= arrsize(kexts) || !image.editable || !activeABI)
+        return false;
+    for (size_t i = 0; i < arrsize(kexts); ++i)
+        kexts[i].loadIndex = i;
+    KernelPatcher patcher(image);
+    patchKext(nullptr, patcher, index, image.address, image.payload->mappedSize);
+    return !(__atomic_load_n(&state, __ATOMIC_ACQUIRE) & 0x80000000U);
+}
+#endif
 
 void Bridge::patchKext(void *, KernelPatcher &patcher, size_t index, mach_vm_address_t address, size_t size) {
     if (__atomic_load_n(&state, __ATOMIC_ACQUIRE) & 0x80000000U)
@@ -651,8 +680,10 @@ void Bridge::initialize() {
         reject("AllocationFailed");
         return;
     }
+#ifndef SIMPLEBCM_EMBEDDED
     if (lilu.onKextLoad(kexts, arrsize(kexts), patchKext) != LiluAPI::Error::NoError)
         reject("CallbackRegistrationFailed");
+#endif
 }
 
 void Bridge::publish(IOService *service) {

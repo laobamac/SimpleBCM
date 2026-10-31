@@ -9,7 +9,7 @@
 
 # SimpleBCM
 
-![Version](https://img.shields.io/badge/version-1.0.1-2563eb)
+![Version](https://img.shields.io/badge/version-2.0.0d2-2563eb)
 ![macOS](https://img.shields.io/badge/macOS-Sonoma%2014%20%7C%20Sequoia%2015%20%7C%20Tahoe%2026-111827)
 ![Architecture](https://img.shields.io/badge/arch-x86__64-6b7280)
 ![OpenCore](https://img.shields.io/badge/boot-OpenCore-16a34a)
@@ -18,37 +18,36 @@
 
 </div>
 
-Restore Broadcom Wi-Fi through OpenCore injection without modifying the system volume. Supports macOS Sonoma 14, Sequoia 15 and Tahoe 26 on Intel. Requires Lilu ≥ 1.7.1.
-
 ## Installation
 
-1. Download the [RELEASE package](https://github.com/laobamac/SimpleBCM/releases) for your macOS version.
-2. Merge the packaged kexts into `EFI/OC/Kexts`, preserving the full directory structure. Enable only one copy of Lilu.
-3. Merge `config.fragment.plist`, which includes the `Kernel → Block → Exclude` entry for `IOSkywalkFamily`.
-4. Check the complete configuration with `ocvalidate` from your OpenCore version, then reboot.
+1. Place `SimpleBCM.kext` in `EFI/OC/Kexts`, replacing the previous version.
+2. Disable the separate Add entries for IOSkywalkFamily, IO80211FamilyLegacy and AirPortBrcmNIC.
+3. Merge the packaged `config.fragment.plist`, check with `ocvalidate`, then reboot.
 
-Load order: **Lilu → SimpleBCM → IOSkywalkFamily → IO80211FamilyLegacy → AirPortBrcmNIC**.
+**Required `Kernel → Block` entry: `Identifier=com.apple.iokit.IOSkywalkFamily`, `Strategy=Exclude`, `Enabled=true`.**
 
-Older cards such as BCM943224 also need `Extra/Optional/AirportBrcmFixup.kext` copied to `EFI/OC/Kexts`. Use `config.AirportBrcmFixup.fragment.plist` from the same Optional directory instead.
+If AirportBrcmFixup is needed, add Lilu, AirportBrcmFixup and AirPortBrcmNIC_Injector using `Extra/config.AirportBrcmFixup.fragment.plist`.
 
-## Troubleshooting
+## Debugging
 
-Use the DEBUG package with `-simplebcmdbg` for logs; `-simplebcmoff` disables the driver. Run from the extracted package root:
+Use DEBUG with the `-simplebcmdbg` boot argument. Run from the extracted package directory:
 
 ```sh
 ./Extra/bcmprobe
-python3 Extra/Tools/collect.py
+python3 Extra/collect.py
 ```
 
 ## Building
 
-Requires full Xcode, Git and Python 3.
-
 ```sh
-python3 Tools/build.py --configuration Debug
-python3 Tools/build.py --configuration Release
-python3 Tools/build.py --configuration Release --analyze
-python3 Tools/package.py
+python3 Tools/bootstrap.py --standalone
+python3 Tools/standalone.py build --configuration Debug
+python3 Tools/standalone.py build --configuration Release
+python3 Tools/standalone.py analyze --configuration Release
+python3 Tools/standalone.py package --configuration Debug
+python3 Tools/standalone.py package --configuration Release
 ```
 
-See [NOTICE](NOTICE.md) for third-party components, credits and licenses.
+Xcode project: `SimpleBCMStandalone.xcodeproj`. Output: `dist`.
+
+[Third-party licenses](NOTICE.md)

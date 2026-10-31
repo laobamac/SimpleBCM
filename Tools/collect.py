@@ -32,22 +32,25 @@ def main():
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=False)
     commands = [
+        ["sw_vers"],
         ["sysctl", "-n", "kern.osversion", "kern.osrelease"],
         ["ioreg", "-r", "-c", "SimpleBCM", "-l"],
         ["ioreg", "-r", "-c", "IO80211APIUserClient", "-l"],
         ["ifconfig", "awdl0"],
         ["netstat", "-I", "awdl0", "-b", "-n"],
         ["/usr/bin/log", "show", "--last", "5m", "--style", "compact", "--info", "--debug", "--predicate", '(process == "wifip2pd" AND (subsystem == "com.apple.awdl" OR eventMessage CONTAINS "IOCTL" OR eventMessage CONTAINS "parse event")) OR (process == "sharingd" AND category CONTAINS "AirDrop") OR (process == "mDNSResponder" AND (eventMessage CONTAINS "awdl0" OR eventMessage CONTAINS "airdrop"))'],
-        ["/usr/bin/log", "show", "--last", "15m", "--style", "compact", "--info", "--debug", "--predicate", 'process == "kernel" AND (eventMessage CONTAINS "SimpleBCM" OR eventMessage CONTAINS "IO80211APIUserClient")'],
+        ["/usr/bin/log", "show", "--last", "boot", "--style", "compact", "--info", "--debug", "--predicate", 'process == "kernel" AND (eventMessage CONTAINS "SimpleBCM" OR eventMessage CONTAINS "IO80211APIUserClient" OR eventMessage CONTAINS "IOSkywalkFamily" OR eventMessage CONTAINS "IO80211FamilyLegacy" OR eventMessage CONTAINS "AirPort.BrcmNIC")'],
     ]
     loaded = ["kmutil", "showloaded", "--list-only"]
     for identifier in IDENTIFIERS:
         loaded += ["--optional-identifier", identifier]
     commands.append(loaded)
-    probe = Path(__file__).resolve().parent.parent / "bcmprobe"
-    if not probe.exists():
-        probe = Path(__file__).resolve().parent.parent / "build/DerivedData/Build/Products/Release/bcmprobe"
-    if probe.exists():
+    folder = Path(__file__).resolve().parent
+    candidates = [folder / "bcmprobe", folder.parent / "bcmprobe"]
+    candidates += [folder.parent / "build" / tree / "Build/Products" / configuration / "bcmprobe"
+                   for tree in ("Standalone", "DerivedData") for configuration in ("Release", "Debug")]
+    probe = next((path for path in candidates if path.is_file()), None)
+    if probe is not None:
         commands.append([str(probe)])
     results = [capture(command) for command in commands]
     report = {"copyright": "Copyright © 2026 laobamac. All rights reserved.", "results": results}

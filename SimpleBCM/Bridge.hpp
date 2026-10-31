@@ -10,7 +10,11 @@
 #define SIMPLEBCM_BRIDGE_HPP
 
 #include "WirelessABI.hpp"
+#ifdef SIMPLEBCM_EMBEDDED
+#include "Patcher.hpp"
+#else
 #include <Headers/kern_patcher.hpp>
+#endif
 #include <IOKit/IOService.h>
 
 class IO80211APIUserClient;
@@ -77,6 +81,10 @@ public:
     static void removeClient(IO80211APIUserClient *client);
     static int command(const Endpoint &endpoint, bool set, LegacyRequest &request, void *shadow, size_t size);
     static void publish(IOService *service);
+#ifdef SIMPLEBCM_EMBEDDED
+    static bool prepareImage(LinkedImage &image, size_t index);
+    static void disable(const char *reason);
+#endif
 private:
     static void patchKext(void *, KernelPatcher &patcher, size_t index, mach_vm_address_t address, size_t size);
 };

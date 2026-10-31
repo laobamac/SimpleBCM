@@ -42,17 +42,20 @@ jobs:
               ast.parse(path.read_text(), filename=str(path))
           for path in Path('Docs').glob('*.json'):
               json.loads(path.read_text())
-          for path in Path('SimpleBCM').glob('*.plist'):
-              plistlib.loads(path.read_bytes())
-          for path in Path('SimpleBCM.xcodeproj').rglob('*.xcscheme'):
-              ET.parse(path)
+          for folder in ['SimpleBCM', 'Standalone']:
+              for path in Path(folder).glob('*.plist'):
+                  plistlib.loads(path.read_bytes())
+          for project in ['SimpleBCM.xcodeproj', 'SimpleBCMStandalone.xcodeproj']:
+              for path in Path(project).rglob('*.xcscheme'):
+                  ET.parse(path)
 
-          version = re.search(r'^MODULE_VERSION\s*=\s*(\S+)', Path('Config/Kernel.xcconfig').read_text(), re.M).group(1)
-          package = ast.parse(Path('Tools/package.py').read_text())
-          package_version = next(ast.literal_eval(node.value) for node in package.body
-                                 if isinstance(node, ast.Assign)
-                                 and any(isinstance(target, ast.Name) and target.id == 'VERSION' for target in node.targets))
-          assert version == package_version, 'Driver and package versions differ'
+          for config, script in [('Kernel', 'package'), ('Standalone', 'embed')]:
+              version = re.search(r'^MODULE_VERSION\s*=\s*(\S+)', Path(f'Config/{config}.xcconfig').read_text(), re.M).group(1)
+              package = ast.parse(Path(f'Tools/{script}.py').read_text())
+              package_version = next(ast.literal_eval(node.value) for node in package.body
+                                     if isinstance(node, ast.Assign)
+                                     and any(isinstance(target, ast.Name) and target.id == 'VERSION' for target in node.targets))
+              assert version == package_version, f'{config} driver and package versions differ'
           for name in ['README.md', 'README.en.md']:
               assert f'version-{version}-' in Path(name).read_text(), name
           print('Source metadata and version checks passed.')
