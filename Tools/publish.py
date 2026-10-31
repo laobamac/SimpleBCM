@@ -28,25 +28,25 @@ def prerelease_body(repository, commits):
         subject = commit['commit']['message'].splitlines()[0]
         subject = re.sub(r'([\\`*_{}\[\]<>#|])', r'\\\1', subject)
         changes.append(f'- [`{commit["sha"][:7]}`]({repository_url}/commit/{commit["sha"]}) {subject}')
-    return 'Development build for macOS Sequoia and macOS Tahoe.\n\n' + '\n'.join(changes) + '\n'
+    return 'Development build for macOS Sonoma, macOS Sequoia and macOS Tahoe.\n\n' + '\n'.join(changes) + '\n'
 
 
 def release_body(repository, sha):
     source = f'https://github.com/{repository}/blob/{sha}'
-    return f'''支持 macOS Sequoia 15 和 macOS Tahoe 26，通过 OpenCore 注入恢复 Broadcom Wi-Fi 驱动，无需修改系统卷。
+    return f'''支持 macOS Sonoma 14、macOS Sequoia 15 和 macOS Tahoe 26，通过 OpenCore 注入恢复 Broadcom Wi-Fi 驱动，无需修改系统卷。
 
-- SimpleBCM 同时支持两个系统；相同构建类型的二进制完全一致，系统包仅区分配套驱动和配置。
+- SimpleBCM 同时支持三个系统；相同构建类型的二进制完全一致，系统包仅区分配套驱动和配置。
 - 每个系统提供 DEBUG 和 RELEASE 包，日常使用请选择对应系统的 RELEASE 包。
-- BCM943224PCIEBT2 已通过用户基本使用测试。安装方法与支持范围见 [README]({source}/README.md)。
+- 本版新增 Sonoma ABI 适配。安装方法与支持范围见 [README]({source}/README.md)。
 
 <details>
 <summary>English</summary>
 
-Supports macOS Sequoia 15 and macOS Tahoe 26, restoring Broadcom Wi-Fi drivers through OpenCore injection without modifying the system volume.
+Supports macOS Sonoma 14, macOS Sequoia 15 and macOS Tahoe 26, restoring Broadcom Wi-Fi drivers through OpenCore injection without modifying the system volume.
 
-- SimpleBCM supports both systems. Binaries of the same build type are identical; OS-specific packages differ only in companion drivers and configuration.
+- SimpleBCM supports all three systems. Binaries of the same build type are identical; OS-specific packages differ only in companion drivers and configuration.
 - DEBUG and RELEASE packages are available for each system. Choose the RELEASE package for your macOS version for everyday use.
-- Basic operation with BCM943224PCIEBT2 has been confirmed by the user. See the [README]({source}/README.en.md) for installation and supported configurations.
+- This release adds Sonoma ABI support. See the [README]({source}/README.en.md) for installation and supported configurations.
 
 </details>'''
 

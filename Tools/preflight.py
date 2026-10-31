@@ -14,7 +14,7 @@ import plistlib
 import subprocess
 from pathlib import Path
 
-from configure import AIRPORT_SEQUOIA, AIRPORT_TAHOE, CONFLICTING_DRIVERS, FIXUP, INJECTOR, SYSTEMS, drivers
+from configure import AIRPORT_ORIGINAL, AIRPORT_TAHOE, CONFLICTING_DRIVERS, FIXUP, INJECTOR, SYSTEMS, drivers
 
 
 def version(value):
@@ -30,8 +30,8 @@ def enabled(entry, running):
 
 def check_configuration(oc, running, manifest=None):
     issues = []
-    if running[0] not in (24, 25):
-        issues.append("要求 macOS Sequoia 或 Tahoe / Darwin 24.x 或 25.x。")
+    if running[0] not in (23, 24, 25):
+        issues.append("要求 macOS Sonoma、Sequoia 或 Tahoe / Darwin 23.x、24.x 或 25.x。")
     config = plistlib.loads((oc / "config.plist").read_bytes())
     entries = [entry for entry in config["Kernel"]["Add"] if enabled(entry, running)]
     use_fixup = any(entry.get("BundlePath") == FIXUP[0] for entry in entries)
@@ -73,8 +73,8 @@ def check_configuration(oc, running, manifest=None):
         except (OSError, ValueError, plistlib.InvalidFileException):
             pass
         if Path(path).name in CONFLICTING_DRIVERS or (
-                Path(path).name == "AirPortBrcmNIC.kext" and path != AIRPORT_SEQUOIA[0]) or (
-                path in (AIRPORT_SEQUOIA[0], AIRPORT_TAHOE[0]) and path not in {item[0] for item in expected}):
+                Path(path).name == "AirPortBrcmNIC.kext" and path != AIRPORT_ORIGINAL[0]) or (
+                path in (AIRPORT_ORIGINAL[0], AIRPORT_TAHOE[0]) and path not in {item[0] for item in expected}):
             issues.append(f"此项与目标系统的 AirPort 后端冲突：{path}")
         if path == INJECTOR[0] and not use_fixup:
             issues.append("NIC Injector 必须与可选 AirportBrcmFixup 一起启用。")

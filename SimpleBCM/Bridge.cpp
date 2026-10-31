@@ -337,6 +337,8 @@ static void queueEvent(IOService *self, InterfaceKind kind, uint32_t message, vo
         __atomic_fetch_add(&counters.dropped, 1ULL, __ATOMIC_RELAXED);
         return;
     }
+    const auto &abi = Bridge::abi();
+    const auto outputLength = static_cast<uint32_t>(eventPayloadSize(message, length, abi));
     clock_sec_t seconds;
     clock_usec_t microseconds;
     clock_get_calendar_microtime(&seconds, &microseconds);
@@ -360,7 +362,7 @@ static void queueEvent(IOService *self, InterfaceKind kind, uint32_t message, vo
         if (slot < arrsize(availability)) {
             auto &saved = availability[slot];
             if (powerSnapshot && (saved.original ||
-                (saved.event.length == NativeDriverAvailableSize &&
+                (saved.event.length == abi.driverAvailableSize &&
                  readUInt32(saved.event.payload + 8) == readUInt32(static_cast<uint8_t *>(payload) + 8)))) {
                 IOSimpleLockUnlockEnableInterrupt(hubLock, interruptState);
                 return;
@@ -371,10 +373,10 @@ static void queueEvent(IOService *self, InterfaceKind kind, uint32_t message, vo
                 strlcpy(saved.name, endpoint.name, sizeof(saved.name));
             }
             saved.event.length = 0;
-            saved.original = !powerSnapshot && eventPayloadSize(message, length) == NativeDriverAvailableSize;
-            if (eventPayloadSize(message, length) == NativeDriverAvailableSize) {
-                copyEventPayload(message, payload, length, saved.event.payload, sizeof(saved.event.payload));
-                saved.event.length = NativeDriverAvailableSize;
+            saved.original = !powerSnapshot && outputLength == abi.driverAvailableSize;
+            if (outputLength == abi.driverAvailableSize) {
+                copyEventPayload(message, payload, length, saved.event.payload, sizeof(saved.event.payload), abi);
+                saved.event.length = outputLength;
                 saved.event.seconds = seconds;
                 saved.event.microseconds = microseconds;
             }
@@ -396,15 +398,16 @@ static void queueEvent(IOService *self, InterfaceKind kind, uint32_t message, vo
     entry.serial = eventSerial;
     entry.controller = endpoint.controller;
     entry.controller->retain();
-    entry.interface = message == AssociationDoneEvent && !length && kind == InterfaceKind::Classic ? self : nullptr;
+    entry.interface = abi.joinEventPolicy != JoinEventPolicy::Passthrough &&
+        message == AssociationDoneEvent && !length && kind == InterfaceKind::Classic ? self : nullptr;
     if (entry.interface)
         entry.interface->retain();
     strlcpy(entry.name, endpoint.name, sizeof(entry.name));
     entry.event = message;
-    entry.length = static_cast<uint32_t>(eventPayloadSize(message, length));
+    entry.length = outputLength;
     entry.seconds = seconds;
     entry.microseconds = microseconds;
-    copyEventPayload(message, payload, length, entry.payload, sizeof(entry.payload));
+    copyEventPayload(message, payload, length, entry.payload, sizeof(entry.payload), abi);
     pendingWrite = next;
     IOSimpleLockUnlockEnableInterrupt(hubLock, interruptState);
     __atomic_fetch_add(&counters.events, 1ULL, __ATOMIC_RELAXED);
@@ -475,8 +478,8 @@ int Bridge::command(const Endpoint &endpoint, bool set, LegacyRequest &request, 
         __atomic_store_n(&counters.lastAvailabilityReadResult, static_cast<uint32_t>(result), __ATOMIC_RELAXED);
         uint8_t event[NativeDriverAvailableSize];
         if (!result && size >= PowerDataSize && request.request.length == PowerDataSize &&
-            encodePowerAvailability(static_cast<const uint8_t *>(shadow), PowerDataSize, event, sizeof(event)))
-            queueEvent(endpoint.interface, endpoint.kind, DriverAvailableEvent, event, sizeof(event), true);
+            encodePowerAvailability(static_cast<const uint8_t *>(shadow), PowerDataSize, event, sizeof(event), abi()))
+            queueEvent(endpoint.interface, endpoint.kind, DriverAvailableEvent, event, abi().driverAvailableSize, true);
     }
     return result;
 }
@@ -610,13 +613,13 @@ void Bridge::patchKext(void *, KernelPatcher &patcher, size_t index, mach_vm_add
         }
         __atomic_fetch_or(&state, 2U, __ATOMIC_RELEASE);
     } else if (index == kexts[2].loadIndex) {
-        const bool sequoia = abi().kernel == 24;
-        const auto guards = sequoia ? AirPortSequoiaGuards : AirPortGuards;
-        const auto guardCount = sequoia ? arrsize(AirPortSequoiaGuards) : arrsize(AirPortGuards);
-        const auto copies = sequoia ? AirPortSequoiaCopySites : AirPortCopySites;
-        const auto copyCount = sequoia ? arrsize(AirPortSequoiaCopySites) : arrsize(AirPortCopySites);
+        const bool original = abi().backend == AirPortBackend::Original;
+        const auto guards = original ? AirPortOriginalGuards : AirPortGuards;
+        const auto guardCount = original ? arrsize(AirPortOriginalGuards) : arrsize(AirPortGuards);
+        const auto copies = original ? AirPortOriginalCopySites : AirPortCopySites;
+        const auto copyCount = original ? arrsize(AirPortOriginalCopySites) : arrsize(AirPortCopySites);
         if (!validate(address, size, guards, guardCount)) {
-            reject(sequoia ? "SequoiaAirPortBinaryMismatch" : "TahoeAirPortBinaryMismatch");
+            reject(original ? "OriginalAirPortBinaryMismatch" : "TahoeAirPortBinaryMismatch");
             return;
         }
         if (!patchCopies(patcher, address, size, copies, copyCount)) {
@@ -638,7 +641,7 @@ void Bridge::initialize() {
         reject("UnsupportedKernel");
         return;
     }
-    kexts[2].paths = airportPaths + (activeABI->kernel == 24 ? 0 : 1);
+    kexts[2].paths = airportPaths + (activeABI->backend == AirPortBackend::Original ? 0 : 1);
     kexts[2].pathNum = 1;
     contextLock = IOSimpleLockAlloc();
     hubLock = IOSimpleLockAlloc();
@@ -655,9 +658,9 @@ void Bridge::initialize() {
 void Bridge::publish(IOService *service) {
     service->setProperty("Status", __atomic_load_n(&failure, __ATOMIC_ACQUIRE));
     service->setProperty("PatchState", __atomic_load_n(&state, __ATOMIC_ACQUIRE), 32);
-    service->setProperty("SupportedKernel", "24.x / 25.x");
+    service->setProperty("SupportedKernel", "23.x / 24.x / 25.x");
     service->setProperty("ActiveABI", activeABI ? activeABI->name : "Unsupported");
-    service->setProperty("AirPortBackend", !activeABI ? "Unsupported" : activeABI->kernel == 24 ? "Original" : "Tahoe");
+    service->setProperty("AirPortBackend", !activeABI ? "Unsupported" : activeABI->backend == AirPortBackend::Original ? "Original" : "Tahoe");
     service->setProperty("DriverKitBackend", false);
     struct Metric { const char *name; uint64_t *value; } metrics[] = {
         {"Opens", &counters.opens}, {"DeniedOpens", &counters.denied},

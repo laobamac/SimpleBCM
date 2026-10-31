@@ -19,11 +19,11 @@ import tempfile
 import zipfile
 from pathlib import Path
 
-from configure import AIRPORT_SEQUOIA, AIRPORT_TAHOE, FIXUP, INJECTOR, SYSTEMS, fragment, save
+from configure import AIRPORT_ORIGINAL, AIRPORT_TAHOE, FIXUP, INJECTOR, SYSTEMS, fragment, save
 
 
 ROOT = Path(__file__).resolve().parent.parent
-VERSION = "1.0.0"
+VERSION = "1.0.1"
 CONFIGURATIONS = ("Debug", "Release")
 
 
@@ -80,6 +80,8 @@ def validate_builds():
             raise RuntimeError(f"{configuration} 的驱动版本与发行版本不一致。")
         if report["sourceFingerprint"] != fingerprint or report["sha256"] != digest(binary):
             raise RuntimeError(f"{configuration} 尚未通过当前源码版本的验证。")
+        if report["probeSHA256"] != digest(product / "bcmprobe") or report["probeMinimumMacOS"] != "14.0.0":
+            raise RuntimeError(f"{configuration} 的诊断工具尚未通过 Sonoma 部署目标验证。")
         if report["liluSHA256"] != lilu_digest or report["driverLoading"] != "external":
             raise RuntimeError(f"{configuration} 的配套驱动与验证结果不一致。")
         symbols = product / "SimpleBCM.kext.dSYM/Contents/Resources/DWARF/SimpleBCM"
@@ -130,7 +132,7 @@ def create_package(system, configuration, channel, sha, fingerprint, report, tar
             filename = f"{prefix}-{configuration}.json"
             copy(ROOT / "build" / filename, extra / filename)
             if target_report:
-                filename = f"{prefix}-Sequoia-{configuration}.json"
+                filename = f"{prefix}-{system}-{configuration}.json"
                 copy(ROOT / "build" / filename, extra / filename)
         for filename in ["Analysis-Release.json", "analyze-Release.log", "Lilu-build.json"]:
             copy(ROOT / "build" / filename, extra / filename)
@@ -156,7 +158,7 @@ def create_package(system, configuration, channel, sha, fingerprint, report, tar
             "project": "SimpleBCM", "version": VERSION, "system": system, "kernel": f"{kernel}.x",
             "configuration": configuration, "architecture": "x86_64", "channel": channel,
             "sourceRevision": sha, "sourceFingerprint": fingerprint,
-            "driverSupportedKernels": ["24.x", "25.x"], "driverSHA256": report["sha256"],
+            "driverSupportedKernels": [f"{major}.x" for major in SYSTEMS.values()], "driverSHA256": report["sha256"],
             "driverLoading": "external", "hardwareValidation": "pending",
             "validationEnvironment": {"OSBuild": report["OSBuild"], "validationMode": report["validationMode"]},
             "targetValidations": [target_report] if target_report else [],
@@ -189,7 +191,7 @@ def verify_package(archive, system, configuration, channel, sha):
         manifest = json.loads(bundle.read(name + "/Extra/manifest.json"))
         assert manifest["system"] == system and manifest["configuration"] == configuration
         assert manifest["channel"] == channel and manifest["sourceRevision"] == sha
-        assert manifest["version"] == VERSION and manifest["driverSupportedKernels"] == ["24.x", "25.x"]
+        assert manifest["version"] == VERSION and manifest["driverSupportedKernels"] == [f"{major}.x" for major in SYSTEMS.values()]
         assert {path.split('/')[0] for path in paths} == {"EFI", "Extra", "config.fragment.plist"}
         assert paths == set(manifest["files"]) | {"Extra/manifest.json"} and len(paths) == len(names)
         assert not any(path.startswith("Extra/Sources/") or "/__pycache__/" in path for path in paths)
@@ -204,8 +206,8 @@ def verify_package(archive, system, configuration, channel, sha):
         optional = plistlib.loads(bundle.read(name + "/Extra/Optional/config.AirportBrcmFixup.fragment.plist"))
         assert optional == fragment(True, SYSTEMS[system])
         assert len(manifest["bundles"]) == 5 and len(manifest["optionalBundles"]) == 2
-        selected = AIRPORT_SEQUOIA if system == "Sequoia" else AIRPORT_TAHOE
-        other = AIRPORT_TAHOE if system == "Sequoia" else AIRPORT_SEQUOIA
+        selected = AIRPORT_TAHOE if system == "Tahoe" else AIRPORT_ORIGINAL
+        other = AIRPORT_ORIGINAL if system == "Tahoe" else AIRPORT_TAHOE
         assert any(entry["BundlePath"] == selected[0] for entry in config["Kernel"]["Add"])
         assert not any(path.startswith("EFI/OC/Kexts/" + other[0] + "/") for path in paths)
         for entry in config["Kernel"]["Add"]:
@@ -218,8 +220,8 @@ def verify_package(archive, system, configuration, channel, sha):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--channel", choices=["pre", "rel"], default="rel")
-    parser.add_argument("--target-volume", type=Path, help="附带 Sequoia 24H23 系统卷静态验证")
-    parser.add_argument("--verify", action="store_true", help="只验证已有的四个发布包")
+    parser.add_argument("--target-volume", type=Path, action="append", help="附带已分析系统卷的静态验证；可重复指定")
+    parser.add_argument("--verify", action="store_true", help="只验证已有的六个发布包")
     args = parser.parse_args()
     sha = source_revision()
     if not args.verify:
@@ -227,18 +229,21 @@ def main():
         target_reports = {}
         if args.target_volume:
             from audit_target import validate
-            target_reports = {configuration: validate(args.target_volume, configuration) for configuration in CONFIGURATIONS}
+            for volume in args.target_volume:
+                for configuration in CONFIGURATIONS:
+                    target = validate(volume, configuration)
+                    target_reports[(target["system"], configuration)] = target
         for system, configuration in variants():
             create_package(system, configuration, args.channel, sha, fingerprint, reports[configuration],
-                           target_reports.get(configuration) if system == "Sequoia" else None)
+                           target_reports.get((system, configuration)))
     binaries = {}
     for system, configuration in variants():
         archive = ROOT / "dist" / (package_name(system, configuration, args.channel, sha) + ".zip")
         manifest = verify_package(archive, system, configuration, args.channel, sha)
         previous = binaries.setdefault(configuration, manifest["driverSHA256"])
-        assert previous == manifest["driverSHA256"], "SimpleBCM must be identical across the two system packages"
+        assert previous == manifest["driverSHA256"], "SimpleBCM must be identical across all system packages"
         print(archive)
-    print("四个包及全部文件哈希通过验证；同一构建类型的 SimpleBCM 跨系统字节一致。")
+    print("六个包及全部文件哈希通过验证；同一构建类型的 SimpleBCM 跨系统字节一致。")
 
 
 if __name__ == "__main__":

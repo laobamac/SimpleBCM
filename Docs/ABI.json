@@ -1,6 +1,6 @@
 {
   "copyright": "Copyright © 2026 laobamac. All rights reserved.",
-  "supportedKernel": "24.x / 25.x",
+  "supportedKernel": "23.x / 24.x / 25.x",
   "images": {
     "Legacy": {
       "path": ".research/binaries/IO80211FamilyLegacy-v1.0.0/IO80211FamilyLegacy.kext/Contents/MacOS/IO80211FamilyLegacy",
@@ -611,7 +611,7 @@
         }
       ]
     },
-    "AirPortSequoia": {
+    "AirPortOriginal": {
       "path": ".research/binaries/IO80211FamilyLegacy-v1.0.0/IO80211FamilyLegacy.kext/Contents/PlugIns/AirPortBrcmNIC.kext/Contents/MacOS/AirPortBrcmNIC",
       "uuid": "e4678feb1dc135cc930648021083d04a",
       "sha256": "884e90b27cff151e432bb36275936f57b43e72419e95b51b3ac067d3f2ccd331",

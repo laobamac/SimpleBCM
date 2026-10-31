@@ -11,6 +11,7 @@ import argparse
 import hashlib
 import json
 import plistlib
+import struct
 import subprocess
 import tempfile
 from pathlib import Path
@@ -57,7 +58,6 @@ static unsigned availabilityConversions;
 static unsigned nativeAvailabilityRecords;
 static unsigned joinStatusConversions;
 static unsigned nativeJoinRecords;
-static unsigned powerAvailabilityConversions;
 static uint32_t randomState = 0xB8021125;
 static uint32_t randomValue() {
     randomState ^= randomState << 13;
@@ -103,7 +103,8 @@ template<bool Sequoia> static void joinStatusVectors() {
         assert(byte == 0xA5);
 }
 
-static void powerAvailabilityVectors() {
+template<unsigned Kernel> static void powerAvailabilityVectors() {
+    constexpr auto abi = Kernel == 23 ? bcm::SonomaABI : Kernel == 24 ? bcm::SequoiaABI : bcm::TahoeABI;
     for (uint32_t radios = 1; radios <= 4; ++radios) {
         for (uint32_t mask = 0; mask < (1U << radios); ++mask) {
             uint8_t power[bcm::PowerDataSize] {};
@@ -112,64 +113,64 @@ static void powerAvailabilityVectors() {
             for (size_t index = 0; index < radios; ++index)
                 bcm::writeUInt32(power + 8 + 4 * index, (mask >> index) & 1);
             const std::vector<uint8_t> source(power, power + sizeof(power));
-            uint8_t arena[bcm::NativeDriverAvailableSize + 16];
+            uint8_t arena[abi.driverAvailableSize + 16];
             memset(arena, 0xA5, sizeof(arena));
             auto output = arena + 8;
-            assert(!bcm::encodePowerAvailability(power, sizeof(power), output, bcm::NativeDriverAvailableSize - 1));
+            assert(!bcm::encodePowerAvailability(power, sizeof(power), output, abi.driverAvailableSize - 1, abi));
             for (auto byte : arena)
                 assert(byte == 0xA5);
-            assert(bcm::encodePowerAvailability(power, sizeof(power), output, bcm::NativeDriverAvailableSize));
+            assert(bcm::encodePowerAvailability(power, sizeof(power), output, abi.driverAvailableSize, abi));
             assert(bcm::readUInt32(output + 8) == (mask ? 1 : 0));
             assert(bcm::readUInt32(output + 0x10) == bcm::PowerStateAvailabilityReason);
-            for (size_t index = 0; index < bcm::NativeDriverAvailableSize; ++index)
+            for (size_t index = 0; index < abi.driverAvailableSize; ++index)
                 if (!(index >= 8 && index < 12) && !(index >= 0x10 && index < 0x14))
                     assert(output[index] == 0);
             for (size_t index = 0; index < 8; ++index)
-                assert(arena[index] == 0xA5 && output[bcm::NativeDriverAvailableSize + index] == 0xA5);
+                assert(arena[index] == 0xA5 && output[abi.driverAvailableSize + index] == 0xA5);
             assert(!memcmp(power, source.data(), sizeof(power)));
-            ++powerAvailabilityConversions;
         }
     }
     uint8_t power[bcm::PowerDataSize] {};
-    uint8_t output[bcm::NativeDriverAvailableSize];
+    uint8_t output[abi.driverAvailableSize];
     memset(output, 0xA5, sizeof(output));
-    assert(!bcm::encodePowerAvailability(power, sizeof(power), output, sizeof(output)));
+    assert(!bcm::encodePowerAvailability(power, sizeof(power), output, sizeof(output), abi));
     bcm::writeUInt32(power, 1);
     for (uint32_t radios : {0U, 5U}) {
         bcm::writeUInt32(power + 4, radios);
-        assert(!bcm::encodePowerAvailability(power, sizeof(power), output, sizeof(output)));
+        assert(!bcm::encodePowerAvailability(power, sizeof(power), output, sizeof(output), abi));
     }
     bcm::writeUInt32(power + 4, 1);
     bcm::writeUInt32(power + 8, 2);
-    assert(!bcm::encodePowerAvailability(power, sizeof(power), output, sizeof(output)));
+    assert(!bcm::encodePowerAvailability(power, sizeof(power), output, sizeof(output), abi));
     bcm::writeUInt32(power + 8, 1);
-    assert(!bcm::encodePowerAvailability(power, sizeof(power) - 1, output, sizeof(output)));
-    assert(!bcm::encodePowerAvailability(power, sizeof(power) + 1, output, sizeof(output)));
-    assert(!bcm::encodePowerAvailability(nullptr, sizeof(power), output, sizeof(output)));
-    assert(!bcm::encodePowerAvailability(power, sizeof(power), nullptr, sizeof(output)));
+    assert(!bcm::encodePowerAvailability(power, sizeof(power) - 1, output, sizeof(output), abi));
+    assert(!bcm::encodePowerAvailability(power, sizeof(power) + 1, output, sizeof(output), abi));
+    assert(!bcm::encodePowerAvailability(nullptr, sizeof(power), output, sizeof(output), abi));
+    assert(!bcm::encodePowerAvailability(power, sizeof(power), nullptr, sizeof(output), abi));
     for (auto byte : output)
         assert(byte == 0xA5);
 }
 
-static void availabilityVectors() {
+template<unsigned Kernel> static void availabilityVectors() {
+    constexpr auto abi = Kernel == 23 ? bcm::SonomaABI : Kernel == 24 ? bcm::SequoiaABI : bcm::TahoeABI;
     for (size_t length : {size_t(0), size_t(1), bcm::LegacyDriverAvailableSize - 1,
                          bcm::LegacyDriverAvailableSize, bcm::LegacyDriverAvailableSize + 1,
-                         bcm::NativeDriverAvailableSize, bcm::MaximumEventPayload}) {
+                         abi.driverAvailableSize, bcm::MaximumEventPayload}) {
         for (uint32_t event : {9U, 37U, bcm::DriverAvailableEvent}) {
             std::vector<uint8_t> source(length);
             for (auto &byte : source)
                 byte = static_cast<uint8_t>(randomValue());
             auto original = source;
-            const auto expected = event == 0x37 && length == 0xB8 ? size_t(0xF8) : length;
-            assert(bcm::eventPayloadSize(event, length) == expected);
+            const auto expected = event == 0x37 && length == 0xB8 ? abi.driverAvailableSize : length;
+            assert(bcm::eventPayloadSize(event, length, abi) == expected);
             std::vector<uint8_t> arena(expected + 16, 0xA5);
             auto output = arena.data() + 8;
             if (expected) {
-                assert(!bcm::copyEventPayload(event, source.data(), length, output, expected - 1));
+                assert(!bcm::copyEventPayload(event, source.data(), length, output, expected - 1, abi));
                 for (auto byte : arena)
                     assert(byte == 0xA5);
             }
-            assert(bcm::copyEventPayload(event, source.data(), length, output, expected));
+            assert(bcm::copyEventPayload(event, source.data(), length, output, expected, abi));
             if (length)
                 assert(!memcmp(output, source.data(), length));
             for (size_t index = length; index < expected; ++index)
@@ -180,11 +181,11 @@ static void availabilityVectors() {
             ++availabilityConversions;
         }
     }
-    uint8_t output[bcm::NativeDriverAvailableSize];
+    uint8_t output[abi.driverAvailableSize];
     memset(output, 0xA5, sizeof(output));
-    assert(!bcm::copyEventPayload(0x37, nullptr, 0xB8, output, sizeof(output)));
-    assert(!bcm::copyEventPayload(0x37, output, 0xB8, nullptr, sizeof(output)));
-    assert(!bcm::copyEventPayload(1, output, bcm::MaximumEventPayload + 1, output, sizeof(output)));
+    assert(!bcm::copyEventPayload(0x37, nullptr, 0xB8, output, sizeof(output), abi));
+    assert(!bcm::copyEventPayload(0x37, output, 0xB8, nullptr, sizeof(output), abi));
+    assert(!bcm::copyEventPayload(1, output, bcm::MaximumEventPayload + 1, output, sizeof(output), abi));
     for (auto byte : output)
         assert(byte == 0xA5);
 }
@@ -204,7 +205,7 @@ static void nativeAvailability() {
         memcpy(legacy + 0x10, &reason, sizeof(reason));
         memcpy(legacy + 8, &available, sizeof(available));
         uint8_t converted[bcm::NativeDriverAvailableSize];
-        assert(bcm::copyEventPayload(bcm::DriverAvailableEvent, legacy, sizeof(legacy), converted, sizeof(converted)));
+        assert(bcm::copyEventPayload(bcm::DriverAvailableEvent, legacy, sizeof(legacy), converted, sizeof(converted), bcm::TahoeABI));
         auto data = CFDataCreate(kCFAllocatorDefault, converted, sizeof(converted));
         assert(data);
         auto message = initialize(send(reinterpret_cast<id>(cls), sel_registerName("alloc")),
@@ -223,7 +224,7 @@ static void nativeAvailability() {
         bcm::writeUInt32(power + 4, 2);
         bcm::writeUInt32(power + 12, available);
         uint8_t converted[bcm::NativeDriverAvailableSize];
-        assert(bcm::encodePowerAvailability(power, sizeof(power), converted, sizeof(converted)));
+        assert(bcm::encodePowerAvailability(power, sizeof(power), converted, sizeof(converted), bcm::TahoeABI));
         auto data = CFDataCreate(kCFAllocatorDefault, converted, sizeof(converted));
         assert(data);
         auto message = initialize(send(reinterpret_cast<id>(cls), sel_registerName("alloc")),
@@ -362,8 +363,8 @@ static void decode(uint8_t *ring, size_t capacity, bcm::EventState &state, const
     ++checked;
 }
 
-template<bool Sequoia> static void boundaries() {
-    constexpr auto abi = Sequoia ? bcm::SequoiaABI : bcm::TahoeABI;
+template<unsigned Kernel> static void boundaries() {
+    constexpr auto abi = Kernel == 23 ? bcm::SonomaABI : Kernel == 24 ? bcm::SequoiaABI : bcm::TahoeABI;
     for (uint8_t mask : {uint8_t(0), uint8_t(0x3F), uint8_t(0x40), uint8_t(0xFF)}) {
         uint8_t arena[abi.capabilitySize + 16];
         memset(arena, 0xA5, sizeof(arena));
@@ -645,7 +646,7 @@ static unsigned nativeConsumer() {
             uint8_t legacy[bcm::LegacyDriverAvailableSize] {};
             memcpy(legacy + 8, &available, sizeof(available));
             uint8_t payload[bcm::NativeDriverAvailableSize];
-            assert(bcm::copyEventPayload(bcm::DriverAvailableEvent, legacy, sizeof(legacy), payload, sizeof(payload)));
+            assert(bcm::copyEventPayload(bcm::DriverAvailableEvent, legacy, sizeof(legacy), payload, sizeof(payload), bcm::TahoeABI));
             memset(ring, 0, sizeof(ring));
             state = {offset, offset, 0};
             uint32_t write = offset;
@@ -746,11 +747,85 @@ static unsigned nativeConsumer() {
     return count;
 }
 
+static void sonomaVectors() {
+    constexpr auto abi = bcm::SonomaABI;
+    assert(bcm::userABIForKernel(23)->kernel == 23);
+    assert(abi.backend == bcm::AirPortBackend::Original && abi.selectorCount == 7);
+    assert(abi.joinEventPolicy == bcm::JoinEventPolicy::Passthrough);
+    assert(abi.roamProfileSize == 0x7C && abi.scanMultipleSize == 0x14E0);
+    assert(abi.scanResultSize == 0x4CC && abi.capabilitySize == 16 && abi.associateSize == 0x358);
+    for (uint16_t auth : {uint16_t(0), uint16_t(1), uint16_t(8), uint16_t(0xFFFF)}) {
+        for (uint8_t count : {uint8_t(0), uint8_t(1), uint8_t(3), uint8_t(4), uint8_t(255)}) {
+            uint8_t arena[0x358 + 16];
+            memset(arena, 0xA5, sizeof(arena));
+            auto buffer = arena + 8;
+            for (size_t index = 0; index < 0x358; ++index)
+                buffer[index] = static_cast<uint8_t>(randomValue());
+            memcpy(buffer + 6, &auth, 2);
+            memcpy(buffer + 8, &auth, 2);
+            buffer[0x202] = count;
+            uint8_t original[sizeof(arena)];
+            memcpy(original, arena, sizeof(arena));
+            bcm::Request request {};
+            request.length = 0x358;
+            assert(!bcm::prepareAssociate(request, buffer, 0x357, abi));
+            assert(request.length == 0x358 && !memcmp(arena, original, sizeof(arena)));
+            assert(bcm::prepareAssociate(request, buffer, 0x358, abi) == (count <= 3));
+            assert(request.length == (count <= 3 ? 0x224U : 0x358U));
+            assert(!memcmp(arena, original, sizeof(arena)));
+            if (count <= 3)
+                ++associationConversions;
+        }
+    }
+    uint8_t join[0x98];
+    memset(join, 0xA5, sizeof(join));
+    assert(!bcm::encodeJoinStatus(0, 1, nullptr, 0, join, sizeof(join), abi));
+    for (auto byte : join)
+        assert(byte == 0xA5);
+    assert(bcm::copyEventPayload(9, nullptr, 0, nullptr, 0, abi));
+    assert(bcm::eventPayloadSize(9, 0, abi) == 0);
+    alignas(8) uint8_t ring[4096] {};
+    bcm::EventState state {};
+    uint32_t write = 0;
+    uint16_t sequence = 0;
+    assert(bcm::EventRing::append(ring, sizeof(ring), &state, write, sequence, "en0", 9,
+                                 nullptr, 0, 1, 2) == bcm::RingResult::Written);
+    const auto header = reinterpret_cast<const bcm::EventHeader *>(ring);
+    assert(header->event == 9 && header->length == 0 && header->status == 0x57 && write == 0x30);
+}
+
+static void scanMultipleVectors() {
+    for (const auto &abi : {bcm::SonomaABI, bcm::SequoiaABI, bcm::TahoeABI}) {
+        for (unsigned mutation = 0; mutation < 6; ++mutation) {
+            std::vector<uint8_t> arena(abi.scanMultipleSize + 16, 0xA5);
+            auto buffer = arena.data() + 8;
+            memset(buffer, 0, abi.scanMultipleSize);
+            bcm::writeUInt32(buffer, mutation == 1 ? 2 : 1);
+            bcm::writeUInt32(buffer + 8, mutation == 2 ? 11 : 10);
+            bcm::writeUInt32(buffer + 0x19C, mutation == 3 ? 17 : 16);
+            bcm::writeUInt32(buffer + 0x210, mutation == 4 ? 401 : 400);
+            for (size_t index = 0; index < 10; ++index)
+                bcm::writeUInt32(buffer + 0x10 + index * 0x28, mutation == 5 ? 33 : 32);
+            auto original = arena;
+            bcm::Request request {};
+            request.length = static_cast<uint32_t>(abi.scanMultipleSize);
+            assert(!bcm::prepareScanMultiple(request, buffer, abi.scanMultipleSize - 1, abi));
+            assert(arena == original && request.length == abi.scanMultipleSize);
+            assert(bcm::prepareScanMultiple(request, buffer, abi.scanMultipleSize, abi) == (mutation == 0));
+            assert(arena == original);
+            assert(request.length == (mutation ? abi.scanMultipleSize : 0x14E0));
+            request.length = static_cast<uint32_t>(abi.scanMultipleSize - 1);
+            assert(!bcm::prepareScanMultiple(request, buffer, abi.scanMultipleSize, abi));
+            assert(arena == original);
+        }
+    }
+}
+
 static void profileBoundaries() {
-    assert(!bcm::userABIForKernel(23) && !bcm::userABIForKernel(26));
+    assert(!bcm::userABIForKernel(22) && !bcm::userABIForKernel(26));
     assert(bcm::userABIForKernel(24)->kernel == 24 && bcm::userABIForKernel(25)->kernel == 25);
     assert(bcm::SequoiaABI.filterMonitorEvents == 0 && bcm::TahoeABI.filterMonitorEvents == 564);
-    for (const auto &abi : {bcm::SequoiaABI, bcm::TahoeABI}) {
+    for (const auto &abi : {bcm::SonomaABI, bcm::SequoiaABI, bcm::TahoeABI}) {
         std::vector<uint8_t> buffer(abi.scanResultSize + 8, 0xA5);
         bcm::Request request {};
         request.length = static_cast<uint32_t>(abi.kernel == 24 ? 0x8E0 : 0x8D8);
@@ -774,12 +849,19 @@ static void profileBoundaries() {
 
 int main() {
     profileBoundaries();
-    boundaries<false>();
-    boundaries<true>();
-    availabilityVectors();
+    boundaries<23>();
+    boundaries<24>();
+    boundaries<25>();
+    availabilityVectors<23>();
+    availabilityVectors<24>();
+    availabilityVectors<25>();
     joinStatusVectors<false>();
     joinStatusVectors<true>();
-    powerAvailabilityVectors();
+    powerAvailabilityVectors<23>();
+    powerAvailabilityVectors<24>();
+    powerAvailabilityVectors<25>();
+    sonomaVectors();
+    scanMultipleVectors();
     nativeAvailability();
     associationVectors();
     concurrent();
@@ -798,7 +880,7 @@ def run(args, **kwargs):
 
 def source_fingerprint():
     digest = hashlib.sha256()
-    paths = sorted([path for folder in ["SimpleBCM", "Config", "Tools"]
+    paths = sorted([path for folder in ["SimpleBCM", "Config", "Tools", "Probe"]
                     for path in (ROOT / folder).iterdir() if path.is_file()]
                    + [ROOT / "SimpleBCM.xcodeproj/project.pbxproj"])
     for path in paths:
@@ -806,6 +888,17 @@ def source_fingerprint():
         digest.update(path.read_bytes())
     compiled = [path for path in paths if path.parent.name != 'Tools']
     return digest.hexdigest(), max(path.stat().st_mtime_ns for path in compiled)
+
+
+def minimum_macos(image):
+    position = 32
+    for _ in range(struct.unpack_from('<I', image.data, 16)[0]):
+        command, size = struct.unpack_from('<II', image.data, position)
+        if command in (0x24, 0x32):
+            value = struct.unpack_from('<I', image.data, position + (12 if command == 0x32 else 8))[0]
+            return (value >> 16, (value >> 8) & 255, value & 255)
+        position += size
+    raise RuntimeError('Missing macOS deployment target')
 
 
 def main():
@@ -817,8 +910,11 @@ def main():
     if newest > binary.stat().st_mtime_ns:
         raise RuntimeError("内核源码新于二进制，先运行 Tools/build.py。")
     image = Image(binary)
+    probe = binary.parents[3] / 'bcmprobe'
+    probe_minimum = minimum_macos(Image(probe))
+    assert probe_minimum == (14, 0, 0), probe_minimum
     assert run(["xcrun", "lipo", "-archs", str(binary)]).strip() == "x86_64"
-    assert struct_type(image.data) == 11
+    assert struct.unpack_from("<I", image.data, 12)[0] == 11
     plist = plistlib.loads((binary.parent.parent / "Info.plist").read_bytes())
     assert plist["CFBundleIdentifier"] == "cn.laobamac.SimpleBCM"
     assert plist["OSBundleLibraries"]["as.vit9696.Lilu"] == "1.7.1"
@@ -855,27 +951,23 @@ def main():
         executable = Path(folder) / "ABIValidation"
         source.write_text(HOST_SOURCE)
         run(["xcrun", "clang++", "-std=c++14", "-O1", "-g", "-fsanitize=address,undefined", "-fno-omit-frame-pointer",
-             "-mmacosx-version-min=15.0",
+             "-mmacosx-version-min=14.0",
              "-I", str(ROOT / "SimpleBCM"), str(source), "-framework", "IOKit", "-framework", "CoreFoundation", "-lobjc", "-o", str(executable)])
         host = json.loads(run([str(executable)], timeout=60).strip())
     report = {"configuration": args.configuration, "sha256": hashlib.sha256(binary.read_bytes()).hexdigest(), "uuid": image.uuid,
+              "probeSHA256": hashlib.sha256(probe.read_bytes()).hexdigest(), "probeMinimumMacOS": '.'.join(map(str, probe_minimum)),
               "sourceFingerprint": fingerprint, "imports": len(imports), "kernelCollectionImports": len(imports & defined), "liluImports": sorted(lilu),
               "liluSHA256": hashlib.sha256(dependency.read_bytes()).hexdigest(),
-              "liluMinimum": "1.7.1", "supportedKernel": "24.x / 25.x", "driverLoading": "external",
+              "liluMinimum": "1.7.1", "supportedKernel": "23.x / 24.x / 25.x", "driverLoading": "external",
               "configurationChecks": configuration_checks,
               "validationMode": "host-executed",
-              "codecProfiles": ["Sequoia", "Tahoe"],
+              "codecProfiles": ["Sonoma", "Sequoia", "Tahoe"],
               "dependencySymbolInventory": {"images": len(dependencies["images"]), "inheritedVtableRepairs": len(dependencies["inheritedVtableRepairs"]), "unmatchedImports": dependencies["unmatchedImports"]},
               "architecture": "x86_64", "sanitizers": ["AddressSanitizer", "UndefinedBehaviorSanitizer"], "hostABI": host,
               "hardwareValidation": "pending", "OSBuild": run(["sysctl", "-n", "kern.osversion"]).strip()}
     destination = ROOT / f"build/Validation-{args.configuration}.json"
     destination.write_text(json.dumps(report, indent=2) + "\n")
     print(json.dumps(report, indent=2))
-
-
-def struct_type(data):
-    import struct
-    return struct.unpack_from("<I", data, 12)[0]
 
 
 if __name__ == "__main__":

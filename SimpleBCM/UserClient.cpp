@@ -145,7 +145,7 @@ void IO80211APIUserClient::free() {
 
 IOReturn IO80211APIUserClient::externalMethod(uint32_t selector, IOExternalMethodArguments *arguments,
                                            IOExternalMethodDispatch *, OSObject *, void *) {
-    if (!arguments || !commandGate || !gateAdded || selector >= static_cast<uint32_t>(bcm::Selector::Count))
+    if (!arguments || !commandGate || !gateAdded || selector >= bcm::Bridge::abi().selectorCount)
         return kIOReturnBadArgument;
     __atomic_fetch_add(&bcm::counters.selectors[selector], 1ULL, __ATOMIC_RELAXED);
     return commandGate->runAction(dispatchAction, reinterpret_cast<void *>(static_cast<uintptr_t>(selector)), arguments);
@@ -284,8 +284,7 @@ IOReturn IO80211APIUserClient::runCommand(IOExternalMethodArguments *arguments, 
     const bool capabilities = get && request == bcm::CardCapabilitiesRequest &&
         outputSize == abi.capabilitySize;
     const bool associate = set && request == bcm::AssociateRequest;
-    const bool roamProfiles = request == bcm::RoamProfileRequest &&
-        (get ? outputSize : header->length) == bcm::NativeRoamProfileSize;
+    const bool roamProfiles = request == bcm::RoamProfileRequest && abi.roamProfileSize == bcm::NativeRoamProfileSize;
     bool outputPrepared = false;
     __atomic_fetch_add(&bcm::counters.commands, 1ULL, __ATOMIC_RELAXED);
     __atomic_store_n(&bcm::counters.lastRequest, static_cast<uint32_t>(request), __ATOMIC_RELAXED);
@@ -296,7 +295,9 @@ IOReturn IO80211APIUserClient::runCommand(IOExternalMethodArguments *arguments, 
         goto done;
     if ((get && request == bcm::ScanResultRequest && !scanResult) ||
         (get && request == bcm::CardCapabilitiesRequest && !capabilities) ||
-        (associate && header->length != abi.associateSize))
+        (associate && header->length != abi.associateSize) ||
+        (set && request == bcm::ScanMultipleRequest && header->length != abi.scanMultipleSize) ||
+        (request == bcm::RoamProfileRequest && (get ? outputSize : header->length) != abi.roamProfileSize))
         goto done;
     if (get && request == 0x178 && !entitled("com.apple.private.wifi.IO80211.get_pmk")) {
         result = kIOReturnNotPrivileged;
@@ -318,8 +319,8 @@ IOReturn IO80211APIUserClient::runCommand(IOExternalMethodArguments *arguments, 
     legacy.request.length = static_cast<uint32_t>(get ? outputSize : header->length);
     if (scanResult && !bcm::prepareScanResult(legacy.request, shadow, capacity, abi))
         goto done;
-    if (set && request == bcm::ScanMultipleRequest && header->length == bcm::NativeScanMultipleSize &&
-        !bcm::prepareScanMultiple(legacy.request, shadow, capacity))
+    if (set && request == bcm::ScanMultipleRequest &&
+        !bcm::prepareScanMultiple(legacy.request, shadow, capacity, abi))
         goto done;
     if (associate && !bcm::prepareAssociate(legacy.request, shadow, capacity, abi))
         goto done;

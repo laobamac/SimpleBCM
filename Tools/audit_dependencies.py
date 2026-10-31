@@ -37,10 +37,10 @@ def audit(configuration, volume=Path('/'), output=None):
     validate_payloads()
     collection = KernelCollection(Path(volume) / 'System/Library/KernelCollections/BootKernelExtensions.kc')
     running = int(collection.version().split('.')[0])
-    require(running in (24, 25), 'Unsupported target kernel')
-    paths = {name: path for name, path in IMAGES.items() if name != 'AirPortSequoia'}
-    if running == 24:
-        paths['AirPort'] = IMAGES['AirPortSequoia']
+    require(running in (23, 24, 25), 'Unsupported target kernel')
+    paths = {name: path for name, path in IMAGES.items() if name != 'AirPortOriginal'}
+    if running in (23, 24):
+        paths['AirPort'] = IMAGES['AirPortOriginal']
     paths["AirportBrcmFixup"] = ROOT / ".research/binaries/AirportBrcmFixup-v2.2.1-RELEASE/AirportBrcmFixup.kext/Contents/MacOS/AirportBrcmFixup"
     paths["Lilu"] = ROOT / "build/Lilu/Release/Lilu.kext/Contents/MacOS/Lilu"
     paths["SimpleBCM"] = ROOT / f"build/DerivedData/Build/Products/{configuration}/SimpleBCM.kext/Contents/MacOS/SimpleBCM"

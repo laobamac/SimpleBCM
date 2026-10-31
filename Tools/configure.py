@@ -14,29 +14,29 @@ import plistlib
 from pathlib import Path
 
 
-SYSTEMS = {"Sequoia": 24, "Tahoe": 25}
-MINIMUM = "24.0.0"
+SYSTEMS = {"Sonoma": 23, "Sequoia": 24, "Tahoe": 25}
+MINIMUM = "23.0.0"
 MAXIMUM = "25.99.99"
 BUNDLE = "cn.laobamac.SimpleBCM"
 APPLE_NVRAM = "7C436110-AB2A-4BBB-A880-FE41995C9F82"
 DRIVERS = [
     ("Lilu.kext", "as.vit9696.Lilu", "Lilu", "Lilu 1.7.1 or newer; keep one enabled copy"),
-    ("SimpleBCM.kext", BUNDLE, "SimpleBCM", "Sequoia and Tahoe wireless control and event bridge"),
+    ("SimpleBCM.kext", BUNDLE, "SimpleBCM", "Sonoma, Sequoia and Tahoe wireless control and event bridge"),
     ("IOSkywalkFamily.kext", "com.apple.iokit.IOSkywalkFamily", "IOSkywalkFamily", "OCLP IOSkywalk payload"),
     ("IO80211FamilyLegacy.kext", "com.apple.iokit.IO80211FamilyLegacy", "IO80211FamilyLegacy", "Legacy wireless backend"),
-    ("IO80211FamilyLegacy.kext/Contents/PlugIns/AirPortBrcmNIC.kext", "com.apple.driver.AirPort.BrcmNIC", "AirPortBrcmNIC", "Sequoia Broadcom backend"),
+    ("IO80211FamilyLegacy.kext/Contents/PlugIns/AirPortBrcmNIC.kext", "com.apple.driver.AirPort.BrcmNIC", "AirPortBrcmNIC", "Sonoma / Sequoia Broadcom backend"),
     ("AirPortBrcmNIC-Tahoe.kext", "com.apple.driver.AirPort.BrcmNIC", "AirPortBrcmNIC", "Tahoe Broadcom backend"),
 ]
 FIXUP = ("AirportBrcmFixup.kext", "as.lvs1974.AirportBrcmFixup", "AirportBrcmFixup", "Optional: older Broadcom cards such as BCM943224")
 INJECTOR = ("AirportBrcmFixup.kext/Contents/PlugIns/AirPortBrcmNIC_Injector.kext", "as.lvs1974.AirportBrcmNICInjector", "", "Optional: NIC matching for older cards")
-AIRPORT_SEQUOIA, AIRPORT_TAHOE = DRIVERS[-2:]
+AIRPORT_ORIGINAL, AIRPORT_TAHOE = DRIVERS[-2:]
 CONFLICTING_DRIVERS = {"AirPortBrcm4360_Injector.kext"}
 MANAGED_KEXT_NAMES = {Path(entry[0]).name for entry in DRIVERS[1:] + [FIXUP, INJECTOR]} | CONFLICTING_DRIVERS | {"AirPortBrcmNIC.kext"}
 
 
 def driver_range(path):
-    if path == AIRPORT_SEQUOIA[0]:
-        return "24.0.0", "24.99.99"
+    if path == AIRPORT_ORIGINAL[0]:
+        return "23.0.0", "24.99.99"
     if path == AIRPORT_TAHOE[0]:
         return "25.0.0", "25.99.99"
     return MINIMUM, MAXIMUM
@@ -74,7 +74,7 @@ def kernel_range(entry):
 
 def outside_supported(entry, kernel=None):
     minimum, maximum = kernel_range(entry)
-    lower, upper = (kernel, kernel) if kernel else (24, 25)
+    lower, upper = (kernel, kernel) if kernel else (min(SYSTEMS.values()), max(SYSTEMS.values()))
     if maximum < (lower, 0, 0) or minimum > (upper, 99, 99):
         return [entry]
     result = []
@@ -100,8 +100,8 @@ def merge(original, airportbrcmfixup=False, kernel_version=None):
             lilu[0][key] = bound
     airportbrcmfixup = airportbrcmfixup or any(entry.get("Enabled") and Path(entry.get("BundlePath", "")).name
                                               in ("AirportBrcmFixup.kext", "AirPortBrcmNIC_Injector.kext") and
-                                              kernel_range(entry)[0] <= (kernel_version or 25, 99, 99) and
-                                              kernel_range(entry)[1] >= (kernel_version or 24, 0, 0) for entry in existing)
+                                              kernel_range(entry)[0] <= (kernel_version or max(SYSTEMS.values()), 99, 99) and
+                                              kernel_range(entry)[1] >= (kernel_version or min(SYSTEMS.values()), 0, 0) for entry in existing)
     replacement = fragment(airportbrcmfixup, kernel_version)["Kernel"]["Add"][1:]
     filtered = []
     for entry in existing:

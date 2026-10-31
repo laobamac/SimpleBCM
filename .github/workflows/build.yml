@@ -70,7 +70,7 @@ jobs:
         run: python3 Tools/build.py --configuration Release
       - name: Analyze Release
         run: python3 Tools/build.py --configuration Release --analyze
-      - name: Package and verify four variants
+      - name: Package and verify six variants
         env:
           CHANNEL: ${{ steps.channel.outputs.value }}
         run: python3 Tools/package.py --channel "$CHANNEL"

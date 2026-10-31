@@ -47,6 +47,10 @@ constexpr size_t ScanIELengthOffset = 0x8A;
 constexpr size_t ScanIEOffset = 0x8C;
 constexpr size_t LegacyScanIECapacity = 0x400;
 
+enum class AirPortBackend : uint8_t { Original, Tahoe };
+enum class AssociateLayout : uint8_t { Legacy, Extended };
+enum class JoinEventPolicy : uint8_t { Passthrough, Sequoia, Tahoe };
+
 struct UserABI {
     uint32_t kernel;
     const char *name;
@@ -55,23 +59,37 @@ struct UserABI {
     size_t associateSize;
     size_t joinStatusSize;
     uint32_t filterMonitorEvents;
+    size_t scanMultipleSize;
+    size_t roamProfileSize;
+    size_t driverAvailableSize;
+    uint32_t selectorCount;
+    AirPortBackend backend;
+    AssociateLayout associateLayout;
+    JoinEventPolicy joinEventPolicy;
 };
 
-constexpr UserABI SequoiaABI {24, "Sequoia", 0x8D8, 19, 0x384, 0x1CC, 0};
-constexpr UserABI TahoeABI {25, "Tahoe", 0x8E0, 21, 0x38C, 0x1D4, 0x234};
+constexpr UserABI SonomaABI {23, "Sonoma", 0x4CC, 16, 0x358, 0, 0,
+    LegacyScanMultipleSize, LegacyRoamBandSize, LegacyDriverAvailableSize, 7,
+    AirPortBackend::Original, AssociateLayout::Legacy, JoinEventPolicy::Passthrough};
+constexpr UserABI SequoiaABI {24, "Sequoia", 0x8D8, 19, 0x384, 0x1CC, 0,
+    NativeScanMultipleSize, NativeRoamProfileSize, NativeDriverAvailableSize, 9,
+    AirPortBackend::Original, AssociateLayout::Extended, JoinEventPolicy::Sequoia};
+constexpr UserABI TahoeABI {25, "Tahoe", 0x8E0, 21, 0x38C, 0x1D4, 0x234,
+    NativeScanMultipleSize, NativeRoamProfileSize, NativeDriverAvailableSize, 9,
+    AirPortBackend::Tahoe, AssociateLayout::Extended, JoinEventPolicy::Tahoe};
 
 inline const UserABI *userABIForKernel(uint32_t kernel) {
-    return kernel == 24 ? &SequoiaABI : kernel == 25 ? &TahoeABI : nullptr;
+    return kernel == 23 ? &SonomaABI : kernel == 24 ? &SequoiaABI : kernel == 25 ? &TahoeABI : nullptr;
 }
 
-inline size_t eventPayloadSize(uint32_t event, size_t length) {
+inline size_t eventPayloadSize(uint32_t event, size_t length, const UserABI &abi) {
     return event == DriverAvailableEvent && length == LegacyDriverAvailableSize
-        ? NativeDriverAvailableSize : length;
+        ? abi.driverAvailableSize : length;
 }
 
 inline bool copyEventPayload(uint32_t event, const void *source, size_t length,
-                             uint8_t *destination, size_t capacity) {
-    const auto outputLength = eventPayloadSize(event, length);
+                             uint8_t *destination, size_t capacity, const UserABI &abi) {
+    const auto outputLength = eventPayloadSize(event, length, abi);
     if (length > MaximumEventPayload || outputLength > capacity ||
         (outputLength && !destination) || (length && !source))
         return false;
@@ -170,8 +188,8 @@ inline void writeUInt32(uint8_t *buffer, uint32_t value) {
         buffer[index] = static_cast<uint8_t>(value >> (index * 8));
 }
 
-inline bool prepareScanMultiple(Request &request, uint8_t *buffer, size_t capacity) {
-    if (!buffer || capacity < NativeScanMultipleSize || request.length != NativeScanMultipleSize ||
+inline bool prepareScanMultiple(Request &request, uint8_t *buffer, size_t capacity, const UserABI &abi) {
+    if (!buffer || capacity < abi.scanMultipleSize || request.length != abi.scanMultipleSize ||
         readUInt32(buffer) != 1 || readUInt32(buffer + 8) > 10 ||
         readUInt32(buffer + 0x19C) > 16 || readUInt32(buffer + 0x210) > 400)
         return false;
@@ -179,15 +197,15 @@ inline bool prepareScanMultiple(Request &request, uint8_t *buffer, size_t capaci
         if (readUInt32(buffer + 0x10 + index * 0x28) > 32)
             return false;
     }
-    for (size_t offset = LegacyScanMultipleSize; offset < NativeScanMultipleSize; ++offset)
+    for (size_t offset = LegacyScanMultipleSize; offset < abi.scanMultipleSize; ++offset)
         buffer[offset] = 0;
     request.length = LegacyScanMultipleSize;
     return true;
 }
 
 inline bool encodePowerAvailability(const uint8_t *power, size_t length,
-                                    uint8_t *output, size_t capacity) {
-    if (!power || !output || length != PowerDataSize || capacity < NativeDriverAvailableSize ||
+                                    uint8_t *output, size_t capacity, const UserABI &abi) {
+    if (!power || !output || length != PowerDataSize || capacity < abi.driverAvailableSize ||
         readUInt32(power) != 1)
         return false;
     const auto radios = readUInt32(power + 4);
@@ -200,7 +218,7 @@ inline bool encodePowerAvailability(const uint8_t *power, size_t length,
             return false;
         available |= value;
     }
-    for (size_t index = 0; index < NativeDriverAvailableSize; ++index)
+    for (size_t index = 0; index < abi.driverAvailableSize; ++index)
         output[index] = 0;
     writeUInt32(output + 8, available);
     writeUInt32(output + 0x10, PowerStateAvailabilityReason);
@@ -209,12 +227,12 @@ inline bool encodePowerAvailability(const uint8_t *power, size_t length,
 
 inline bool encodeJoinStatus(uint32_t status, uint32_t result, const uint8_t *bssid,
                               size_t bssidLength, uint8_t *output, size_t capacity, const UserABI &abi) {
-    if (!output || capacity < abi.joinStatusSize ||
+    if (abi.joinEventPolicy == JoinEventPolicy::Passthrough || !output || capacity < abi.joinStatusSize ||
         (bssidLength && (!bssid || bssidLength != 6)))
         return false;
     for (size_t index = 0; index < abi.joinStatusSize; ++index)
         output[index] = 0;
-    const bool sequoia = abi.kernel == 24;
+    const bool sequoia = abi.joinEventPolicy == JoinEventPolicy::Sequoia;
     writeUInt32(output + (sequoia ? 0x08 : 0x1B8), status);
     writeUInt32(output + (sequoia ? 0x0C : 0x1BC), status);
     if (!sequoia) {
@@ -229,6 +247,12 @@ inline bool encodeJoinStatus(uint32_t status, uint32_t result, const uint8_t *bs
 inline bool prepareAssociate(Request &request, uint8_t *buffer, size_t capacity, const UserABI &abi) {
     if (!buffer || capacity < abi.associateSize || request.length != abi.associateSize)
         return false;
+    if (abi.associateLayout == AssociateLayout::Legacy) {
+        if (buffer[0x202] > 3)
+            return false;
+        request.length = LegacyAssociateSize;
+        return true;
+    }
     const auto lower = readUInt32(buffer + 8);
     const auto upper = readUInt32(buffer + 12);
     if (lower > UINT16_MAX || upper > UINT16_MAX || buffer[0x206] > 3)

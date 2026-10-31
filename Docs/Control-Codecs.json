@@ -464,13 +464,13 @@
       "operation": "_copyout"
     },
     {
-      "image": "AirPortSequoia",
+      "image": "AirPortOriginal",
       "address": "0x38538",
       "symbol": "__ZN15AirPort_BrcmNIC11wlIocCommonEP13apple80211reqP8OSObjectbb+0x70",
       "operation": "_copyin"
     },
     {
-      "image": "AirPortSequoia",
+      "image": "AirPortOriginal",
       "address": "0x386c6",
       "symbol": "__ZN15AirPort_BrcmNIC11wlIocCommonEP13apple80211reqP8OSObjectbb+0x1fe",
       "operation": "_copyout"
@@ -480,6 +480,7 @@
     "request": 20,
     "legacySize": 548,
     "nativeSize": {
+      "Sonoma": 856,
       "Sequoia": 900,
       "Tahoe": 908
     },
@@ -489,6 +490,10 @@
       "Tahoe": "0xa094"
     },
     "driverConsumer": "0x42b8e",
+    "extendedLayoutSystems": [
+      "Sequoia",
+      "Tahoe"
+    ],
     "authLower": {
       "legacyOffset": 6,
       "legacyWidth": 2,
@@ -532,6 +537,11 @@
     "request": 216,
     "legacyBandSize": 124,
     "nativeBandSize": 128,
+    "aggregateSystems": [
+      "Sequoia",
+      "Tahoe"
+    ],
+    "sonomaTransfer": "Single 0x7C-byte Legacy band, passed through unchanged",
     "nativeAllBandsSize": 384,
     "nativeValidOffset": 12,
     "legacyRecordsOffset": 12,
@@ -551,6 +561,7 @@
     "request": 12,
     "legacySize": 12,
     "nativeSize": {
+      "Sonoma": 16,
       "Sequoia": 19,
       "Tahoe": 21
     },
@@ -567,13 +578,17 @@
     "request": 11,
     "legacySize": 1164,
     "nativeSize": {
+      "Sonoma": 1228,
       "Sequoia": 2264,
       "Tahoe": 2272
     },
     "commonHeaderSize": 140,
     "ieLengthOffset": 138,
     "legacyIECapacity": 1024,
-    "nativeIECapacity": 2048,
+    "nativeIECapacity": {
+      "Sequoia": 2048,
+      "Tahoe": 2048
+    },
     "legacyCodec": "0x78a33",
     "nativeCallerSizeInstruction": "0x4333",
     "nativeParser": "0x6d4f",
@@ -584,5 +599,53 @@
     "symbol": "Apple80211RawGet",
     "instructionOffset": "0x6984",
     "behavior": "If req_data is NULL, the native caller supplies &req_val and length 4 as IOUC output."
+  },
+  "sonoma": {
+    "OSBuild": "23J620",
+    "kernel": "23.6.0",
+    "airPortBackend": "Original",
+    "nativeIO80211UUID": "0a93a0f4c12532fe918856f7c24ddc41",
+    "nativeIO80211FamilyUUID": "ec4ba6726e083ad2b88201690a960ff4",
+    "scanResultSizeInstruction": "0x4baa",
+    "capabilitySizeInstruction": "0x20e10",
+    "associateSizeInstruction": "0xa5fe",
+    "associateTransfer": {
+      "nativeSize": 856,
+      "legacyPrefixSize": 548,
+      "prefixUnchanged": true,
+      "authLowerOffset": 6,
+      "authUpperOffset": 8,
+      "authWidth": 2,
+      "ssidLengthOffset": 12,
+      "keyOffset": 56,
+      "rsnLengthOffset": 204,
+      "pmkLengthOffset": 468,
+      "bssidCountOffset": 514,
+      "bssidMaximum": 3,
+      "authWriteInstructions": [
+        "0xa99c",
+        "0xa9be"
+      ]
+    },
+    "scanMultipleSize": 5344,
+    "roamProfileSize": 124,
+    "selectorCount": 7,
+    "commandPacketSize": 15408,
+    "largeCommandPacketSize": 245808,
+    "eventHeaderSize": 48,
+    "driverAvailableSize": 184,
+    "associationDonePolicy": "Preserve Legacy empty event; no synthetic JoinStatus",
+    "associationDoneConsumer": {
+      "symbol": "__eventRead",
+      "eventDispatch": "0x22376",
+      "resultRequest21": "0x224d7",
+      "getterCall": "0x224e5",
+      "emptyPayloadCallback": [
+        "0x22502",
+        "0x22517"
+      ]
+    },
+    "validation": "Native binary analysis and host-executed codec vectors",
+    "upstreamWireless": "https://github.com/dortania/OpenCore-Legacy-Patcher/blob/8da38565fa1551a8e5ce8613ea835d04dd97e089/opencore_legacy_patcher/efi_builder/networking/wireless.py"
   }
 }
