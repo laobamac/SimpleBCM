@@ -40,14 +40,14 @@ python3 Extra/collect.py
 ## 构建
 
 ```sh
-python3 Tools/bootstrap.py --standalone
-python3 Tools/standalone.py build --configuration Debug
-python3 Tools/standalone.py build --configuration Release
-python3 Tools/standalone.py analyze --configuration Release
-python3 Tools/standalone.py package --configuration Debug
-python3 Tools/standalone.py package --configuration Release
+python3 Tools/bootstrap.py
+python3 Tools/build.py build --configuration Debug
+python3 Tools/build.py build --configuration Release
+python3 Tools/build.py analyze --configuration Release
+python3 Tools/build.py package --configuration Debug
+python3 Tools/build.py package --configuration Release
 ```
 
-Xcode 工程：`SimpleBCMStandalone.xcodeproj`。产物目录：`dist`。
+Xcode 工程：`SimpleBCM.xcodeproj`。产物目录：`dist`。
 
 [第三方许可](NOTICE.md)

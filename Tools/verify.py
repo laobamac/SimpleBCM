@@ -7,18 +7,10 @@
 #  Copyright © 2026 laobamac. All rights reserved.
 #
 
-import argparse
-import hashlib
 import json
-import plistlib
-import struct
 import subprocess
 import tempfile
 from pathlib import Path
-
-from macho import Image
-from audit_dependencies import audit
-from verify_configuration import verify as verify_configuration
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -871,104 +863,17 @@ int main() {
 '''
 
 
-def run(args, **kwargs):
-    result = subprocess.run(args, text=True, capture_output=True, **kwargs)
-    if result.returncode:
-        raise RuntimeError(f"{args[0]} failed ({result.returncode})\n{result.stdout}\n{result.stderr}")
-    return result.stdout
+def verify_abi(folder):
+    source = folder / 'ABIValidation.cpp'
+    executable = folder / 'ABIValidation'
+    source.write_text(HOST_SOURCE)
+    subprocess.run(['xcrun', 'clang++', '-std=c++14', '-O1', '-g', '-fsanitize=address,undefined',
+                    '-fno-omit-frame-pointer', '-mmacosx-version-min=14.0', '-I', str(ROOT / 'SimpleBCM'),
+                    str(source), '-framework', 'IOKit', '-framework', 'CoreFoundation',
+                    '-lobjc', '-o', str(executable)], check=True)
+    return json.loads(subprocess.check_output([str(executable)], text=True, timeout=60))
 
 
-def source_fingerprint():
-    digest = hashlib.sha256()
-    paths = sorted([path for folder in ["SimpleBCM", "Config", "Tools", "Probe"]
-                    for path in (ROOT / folder).iterdir() if path.is_file()]
-                   + [ROOT / "SimpleBCM.xcodeproj/project.pbxproj"])
-    for path in paths:
-        digest.update(str(path.relative_to(ROOT)).encode())
-        digest.update(path.read_bytes())
-    compiled = [path for path in paths if path.parent.name != 'Tools']
-    return digest.hexdigest(), max(path.stat().st_mtime_ns for path in compiled)
-
-
-def minimum_macos(image):
-    position = 32
-    for _ in range(struct.unpack_from('<I', image.data, 16)[0]):
-        command, size = struct.unpack_from('<II', image.data, position)
-        if command in (0x24, 0x32):
-            value = struct.unpack_from('<I', image.data, position + (12 if command == 0x32 else 8))[0]
-            return (value >> 16, (value >> 8) & 255, value & 255)
-        position += size
-    raise RuntimeError('Missing macOS deployment target')
-
-
-def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--configuration", choices=["Debug", "Release"], default="Release")
-    args = parser.parse_args()
-    binary = ROOT / f"build/DerivedData/Build/Products/{args.configuration}/SimpleBCM.kext/Contents/MacOS/SimpleBCM"
-    fingerprint, newest = source_fingerprint()
-    if newest > binary.stat().st_mtime_ns:
-        raise RuntimeError("内核源码新于二进制，先运行 Tools/build.py。")
-    image = Image(binary)
-    probe = binary.parents[3] / 'bcmprobe'
-    probe_minimum = minimum_macos(Image(probe))
-    assert probe_minimum == (14, 0, 0), probe_minimum
-    assert run(["xcrun", "lipo", "-archs", str(binary)]).strip() == "x86_64"
-    assert struct.unpack_from("<I", image.data, 12)[0] == 11
-    plist = plistlib.loads((binary.parent.parent / "Info.plist").read_bytes())
-    assert plist["CFBundleIdentifier"] == "cn.laobamac.SimpleBCM"
-    assert plist["OSBundleLibraries"]["as.vit9696.Lilu"] == "1.7.1"
-    symbols = run(["nm", "-gj", str(binary)])
-    for name in ["_SimpleBCM_kern_start", "_SimpleBCM_kern_stop", "_kmod_info"]:
-        assert name in symbols.splitlines(), name
-    imports = set(run(["nm", "-u", "-j", str(binary)]).splitlines())
-    lilu = {
-        "__ZN13KernelPatcher10clearErrorEv", "__ZN13KernelPatcher11solveSymbolEmPKc", "__ZN13KernelPatcher15kernelWriteLockE",
-        "__ZN13KernelPatcher17routeMultipleLongEmPNS_12RouteRequestEmymbb", "__ZN7LiluAPI10onKextLoadEPN13KernelPatcher8KextInfoEmPFvPvRS0_mymES3_",
-        "__ZN7LiluAPI10shouldLoadEPKcmjPS1_mS2_mS2_m13KernelVersionS3_Rb",
-        "__ZN7LiluAPI13releaseAccessEv", "__ZN7LiluAPI13requestAccessEmb", "__ZN8MachInfo16setKernelWritingEbP13_IOSimpleLock", "_lilu", "_lilu_os_log",
-    }
-    if args.configuration == "Debug":
-        lilu.add("__ZN4Page7deleterEPS_")
-    dependency = ROOT / "build/Lilu/Release/Lilu.kext/Contents/MacOS/Lilu"
-    lilu_defined = set(run(["nm", "-g", "-j", "-U", str(dependency)]).splitlines())
-    assert lilu <= lilu_defined, sorted(lilu - lilu_defined)
-    assert imports & lilu_defined == lilu, sorted((imports & lilu_defined) ^ lilu)
-    defined = set(run(["nm", "-g", "-j", "-U", "/System/Library/KernelCollections/BootKernelExtensions.kc"]).splitlines())
-    assert imports - defined == lilu, sorted((imports - defined) ^ lilu)
-    for name in ["_copyin", "_copyout"]:
-        assert name in defined
-    profile = json.loads((ROOT / "Docs/ABI.json").read_text())
-    for data in profile["images"].values():
-        path = ROOT / data["path"]
-        assert hashlib.sha256(path.read_bytes()).hexdigest() == data["sha256"], path
-        assert Image(path).uuid == data["uuid"], path
-        assert Image(path).data not in image.data, f"驱动不应内嵌到 SimpleBCM：{path}"
-    dependencies = audit(args.configuration)
-    configuration_checks = verify_configuration()
-    with tempfile.TemporaryDirectory(prefix="SimpleBCM-ABI-") as folder:
-        source = Path(folder) / "ABIValidation.cpp"
-        executable = Path(folder) / "ABIValidation"
-        source.write_text(HOST_SOURCE)
-        run(["xcrun", "clang++", "-std=c++14", "-O1", "-g", "-fsanitize=address,undefined", "-fno-omit-frame-pointer",
-             "-mmacosx-version-min=14.0",
-             "-I", str(ROOT / "SimpleBCM"), str(source), "-framework", "IOKit", "-framework", "CoreFoundation", "-lobjc", "-o", str(executable)])
-        host = json.loads(run([str(executable)], timeout=60).strip())
-    report = {"configuration": args.configuration, "sha256": hashlib.sha256(binary.read_bytes()).hexdigest(), "uuid": image.uuid,
-              "probeSHA256": hashlib.sha256(probe.read_bytes()).hexdigest(), "probeMinimumMacOS": '.'.join(map(str, probe_minimum)),
-              "sourceFingerprint": fingerprint, "imports": len(imports), "kernelCollectionImports": len(imports & defined), "liluImports": sorted(lilu),
-              "liluSHA256": hashlib.sha256(dependency.read_bytes()).hexdigest(),
-              "liluMinimum": "1.7.1", "supportedKernel": "23.x / 24.x / 25.x", "driverLoading": "external",
-              "configurationChecks": configuration_checks,
-              "validationMode": "host-executed",
-              "codecProfiles": ["Sonoma", "Sequoia", "Tahoe"],
-              "dependencySymbolInventory": {"images": len(dependencies["images"]), "inheritedVtableRepairs": len(dependencies["inheritedVtableRepairs"]), "unmatchedImports": dependencies["unmatchedImports"]},
-              "architecture": "x86_64", "sanitizers": ["AddressSanitizer", "UndefinedBehaviorSanitizer"], "hostABI": host,
-              "hardwareValidation": "pending", "OSBuild": run(["sysctl", "-n", "kern.osversion"]).strip()}
-    destination = ROOT / f"build/Validation-{args.configuration}.json"
-    destination.write_text(json.dumps(report, indent=2) + "\n")
-    print(json.dumps(report, indent=2))
-
-
-if __name__ == "__main__":
-    main()
+if __name__ == '__main__':
+    with tempfile.TemporaryDirectory(prefix='SimpleBCM-ABI-') as folder:
+        print(json.dumps(verify_abi(Path(folder)), indent=2))

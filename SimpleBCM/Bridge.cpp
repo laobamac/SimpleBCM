@@ -9,10 +9,6 @@
 #include "Bridge.hpp"
 #include "Profiles.hpp"
 #include "UserClient.hpp"
-#ifndef SIMPLEBCM_EMBEDDED
-#include <Headers/kern_api.hpp>
-#include <Headers/kern_mach.hpp>
-#endif
 #include <IOKit/IOLib.h>
 #include <IOKit/IOWorkLoop.h>
 #include <libkern/c++/OSData.h>
@@ -89,18 +85,6 @@ static BSDName virtualName;
 static BSDName skywalkName;
 static PerformCommand classicCommand;
 static const UserABI *activeABI;
-
-static const char *legacyPaths[] = {"/System/Library/Extensions/IO80211FamilyLegacy.kext/Contents/MacOS/IO80211FamilyLegacy"};
-static const char *skywalkPaths[] = {"/System/Library/Extensions/IOSkywalkFamily.kext/Contents/MacOS/IOSkywalkFamily"};
-static const char *airportPaths[] = {
-    "/System/Library/Extensions/IO80211FamilyLegacy.kext/Contents/PlugIns/AirPortBrcmNIC.kext/Contents/MacOS/AirPortBrcmNIC",
-    "/System/Library/Extensions/AirPortBrcmNIC-Tahoe.kext/Contents/MacOS/AirPortBrcmNIC"
-};
-static KernelPatcher::KextInfo kexts[] = {
-    {"com.apple.iokit.IO80211FamilyLegacy", legacyPaths, 1, {true}},
-    {"com.apple.iokit.IOSkywalkFamily", skywalkPaths, 1, {true}},
-    {"com.apple.driver.AirPort.BrcmNIC", airportPaths, arrsize(airportPaths), {true}}
-};
 
 static void reject(const char *reason) {
     __atomic_store_n(&failure, reason, __ATOMIC_RELEASE);
@@ -554,49 +538,35 @@ static bool patchCopies(KernelPatcher &patcher, mach_vm_address_t address, size_
         if (followBranch(call + 5 + old) != followBranch(site.output ? output : input))
             return false;
         auto target = site.output ? reinterpret_cast<mach_vm_address_t>(bridgeCopyOut) : reinterpret_cast<mach_vm_address_t>(bridgeCopyIn);
-#ifdef SIMPLEBCM_EMBEDDED
         target = patcher.branchTarget(target, call + 5);
         if (!target)
             return false;
-#endif
         auto delta = static_cast<int64_t>(target - (call + 5));
         if (delta < INT32_MIN || delta > INT32_MAX)
             return false;
         offsets[i] = static_cast<int32_t>(delta);
     }
-#ifndef SIMPLEBCM_EMBEDDED
-    if (MachInfo::setKernelWriting(true, KernelPatcher::kernelWriteLock) != KERN_SUCCESS)
-        return false;
-#endif
     for (size_t i = 0; i < count; ++i)
         memcpy(reinterpret_cast<void *>(address + sites[i].offset + 1), &offsets[i], sizeof(offsets[i]));
-#ifdef SIMPLEBCM_EMBEDDED
     return true;
-#else
-    return MachInfo::setKernelWriting(false, KernelPatcher::kernelWriteLock) == KERN_SUCCESS;
-#endif
 }
 
-#ifdef SIMPLEBCM_EMBEDDED
 void Bridge::disable(const char *reason) {
     reject(reason);
 }
 
 bool Bridge::prepareImage(LinkedImage &image, size_t index) {
-    if (index >= arrsize(kexts) || !image.editable || !activeABI)
+    if (index >= 3 || !image.editable || !activeABI)
         return false;
-    for (size_t i = 0; i < arrsize(kexts); ++i)
-        kexts[i].loadIndex = i;
     KernelPatcher patcher(image);
-    patchKext(nullptr, patcher, index, image.address, image.payload->mappedSize);
+    patchImage(patcher, index, image.address, image.payload->mappedSize);
     return !(__atomic_load_n(&state, __ATOMIC_ACQUIRE) & 0x80000000U);
 }
-#endif
 
-void Bridge::patchKext(void *, KernelPatcher &patcher, size_t index, mach_vm_address_t address, size_t size) {
+void Bridge::patchImage(KernelPatcher &patcher, size_t index, mach_vm_address_t address, size_t size) {
     if (__atomic_load_n(&state, __ATOMIC_ACQUIRE) & 0x80000000U)
         return;
-    if (index == kexts[0].loadIndex) {
+    if (index == 0) {
         if (!validate(address, size, LegacyGuards, arrsize(LegacyGuards))) {
             reject("LegacyBinaryMismatch");
             return;
@@ -627,7 +597,7 @@ void Bridge::patchKext(void *, KernelPatcher &patcher, size_t index, mach_vm_add
             return;
         }
         __atomic_fetch_or(&state, 1U, __ATOMIC_RELEASE);
-    } else if (index == kexts[1].loadIndex) {
+    } else if (index == 1) {
         if (!validate(address, size, SkywalkGuards, arrsize(SkywalkGuards))) {
             reject("SkywalkBinaryMismatch");
             return;
@@ -641,7 +611,7 @@ void Bridge::patchKext(void *, KernelPatcher &patcher, size_t index, mach_vm_add
             return;
         }
         __atomic_fetch_or(&state, 2U, __ATOMIC_RELEASE);
-    } else if (index == kexts[2].loadIndex) {
+    } else if (index == 2) {
         const bool original = abi().backend == AirPortBackend::Original;
         const auto guards = original ? AirPortOriginalGuards : AirPortGuards;
         const auto guardCount = original ? arrsize(AirPortOriginalGuards) : arrsize(AirPortGuards);
@@ -670,8 +640,6 @@ void Bridge::initialize() {
         reject("UnsupportedKernel");
         return;
     }
-    kexts[2].paths = airportPaths + (activeABI->backend == AirPortBackend::Original ? 0 : 1);
-    kexts[2].pathNum = 1;
     contextLock = IOSimpleLockAlloc();
     hubLock = IOSimpleLockAlloc();
     pending = static_cast<PendingEvent *>(IOMalloc(sizeof(PendingEvent) * PendingCapacity));
@@ -680,10 +648,6 @@ void Bridge::initialize() {
         reject("AllocationFailed");
         return;
     }
-#ifndef SIMPLEBCM_EMBEDDED
-    if (lilu.onKextLoad(kexts, arrsize(kexts), patchKext) != LiluAPI::Error::NoError)
-        reject("CallbackRegistrationFailed");
-#endif
 }
 
 void Bridge::publish(IOService *service) {

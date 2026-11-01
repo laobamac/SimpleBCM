@@ -3,7 +3,7 @@
 //  project.pbxproj
 //  SimpleBCM
 //
-//  Created by laobamac on 2026/9/5.
+//  Created by laobamac on 2026/11/1.
 //  Copyright © 2026 laobamac. All rights reserved.
 //
 {
@@ -17,8 +17,12 @@
 		000000000000000000000096 /* SimpleBCM.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000064 /* SimpleBCM.cpp */; };
 		000000000000000000000097 /* Bridge.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000065 /* Bridge.cpp */; };
 		000000000000000000000098 /* UserClient.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000066 /* UserClient.cpp */; };
-		000000000000000000000099 /* .research/Lilu/Lilu/Library/plugin_start.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000007A /* .research/Lilu/Lilu/Library/plugin_start.cpp */; };
+		000000000000000000000099 /* Loader.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000007A /* Loader.cpp */; };
 		00000000000000000000009B /* Probe/main.mm in Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000007B /* Probe/main.mm */; };
+		000000000000000000000140 = {isa = PBXBuildFile; fileRef = 00000000000000000000012C; };
+		000000000000000000000141 = {isa = PBXBuildFile; fileRef = 00000000000000000000012D; };
+		000000000000000000000142 = {isa = PBXBuildFile; fileRef = 00000000000000000000012E; };
+		000000000000000000000143 = {isa = PBXBuildFile; fileRef = 00000000000000000000012F; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -31,10 +35,17 @@
 		000000000000000000000071 /* Profiles.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = Profiles.hpp; sourceTree = "<group>"; };
 		000000000000000000000078 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		000000000000000000000079 /* Config/Kernel.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Config/Kernel.xcconfig; sourceTree = "<group>"; };
-		00000000000000000000007A /* .research/Lilu/Lilu/Library/plugin_start.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = .research/Lilu/Lilu/Library/plugin_start.cpp; sourceTree = "<group>"; };
+		00000000000000000000007A /* Loader.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = Loader.cpp; sourceTree = "<group>"; };
 		00000000000000000000007B /* Probe/main.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; path = Probe/main.mm; sourceTree = "<group>"; };
 		000000000000000000000082 /* SimpleBCM.kext */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; path = SimpleBCM.kext; sourceTree = BUILT_PRODUCTS_DIR; };
 		000000000000000000000083 /* bcmprobe */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; path = bcmprobe; sourceTree = BUILT_PRODUCTS_DIR; };
+		00000000000000000000012C = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = Relocate.cpp; sourceTree = "<group>"; };
+		00000000000000000000012D = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = Patcher.cpp; sourceTree = "<group>"; };
+		00000000000000000000012E = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = build/Embedded/Payloads.cpp; sourceTree = "<group>"; };
+		00000000000000000000012F = {isa = PBXFileReference; lastKnownFileType = sourcecode.asm; path = build/Embedded/Payloads.S; sourceTree = "<group>"; };
+		000000000000000000000130 /* Loader.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = Loader.hpp; sourceTree = "<group>"; };
+		000000000000000000000131 /* Patcher.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = Patcher.hpp; sourceTree = "<group>"; };
+		000000000000000000000132 /* Payload.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = Payload.hpp; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXGroup section */
@@ -48,6 +59,12 @@
 				00000000000000000000006F /* UserClient.hpp */,
 				000000000000000000000070 /* WirelessABI.hpp */,
 				000000000000000000000071 /* Profiles.hpp */,
+				00000000000000000000007A /* Loader.cpp */,
+				00000000000000000000012C /* Relocate.cpp */,
+				00000000000000000000012D /* Patcher.cpp */,
+				000000000000000000000130 /* Loader.hpp */,
+				000000000000000000000131 /* Patcher.hpp */,
+				000000000000000000000132 /* Payload.hpp */,
 				000000000000000000000078 /* Info.plist */,
 			);
 			path = SimpleBCM;
@@ -67,8 +84,9 @@
 			children = (
 				00000000000000000000008C /* SimpleBCM */,
 				000000000000000000000079 /* Config/Kernel.xcconfig */,
-				00000000000000000000007A /* .research/Lilu/Lilu/Library/plugin_start.cpp */,
 				00000000000000000000007B /* Probe/main.mm */,
+				00000000000000000000012E,
+				00000000000000000000012F,
 				00000000000000000000008D /* Products */,
 			);
 			sourceTree = "<group>";
@@ -80,6 +98,7 @@
 			isa = PBXNativeTarget;
 			buildConfigurationList = 0000000000000000000000C9 /* Build configuration list for PBXNativeTarget "SimpleBCM" */;
 			buildPhases = (
+				000000000000000000000150 /* Generate Payloads */,
 				0000000000000000000000A0 /* Sources */,
 			);
 			buildRules = (
@@ -140,7 +159,11 @@
 				000000000000000000000096 /* SimpleBCM.cpp in Sources */,
 				000000000000000000000097 /* Bridge.cpp in Sources */,
 				000000000000000000000098 /* UserClient.cpp in Sources */,
-				000000000000000000000099 /* .research/Lilu/Lilu/Library/plugin_start.cpp in Sources */,
+				000000000000000000000099 /* Loader.cpp in Sources */,
+				000000000000000000000140,
+				000000000000000000000141,
+				000000000000000000000142,
+				000000000000000000000143,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -153,6 +176,25 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXSourcesBuildPhase section */
+/* Begin PBXShellScriptBuildPhase section */
+		000000000000000000000150 /* Generate Payloads */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputPaths = (
+			);
+			outputPaths = (
+				"$(SRCROOT)/build/Embedded/Payloads.cpp",
+				"$(SRCROOT)/build/Embedded/Payloads.S",
+			);
+			name = "Generate Payloads";
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "python3 -B \"$SRCROOT/Tools/embed.py\"";
+		};
+/* End PBXShellScriptBuildPhase section */
 
 /* Begin XCBuildConfiguration section */
 		0000000000000000000000AA /* Debug */ = {

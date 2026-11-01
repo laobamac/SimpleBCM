@@ -29,13 +29,6 @@ inline unsigned getKernelVersion() { return static_cast<unsigned>(version_major)
 class KernelPatcher {
 public:
     static constexpr size_t KernelID = static_cast<size_t>(-1);
-    struct KextInfo {
-        const char *id;
-        const char **paths;
-        size_t pathNum;
-        bool sys[1];
-        size_t loadIndex {0};
-    };
     struct RouteRequest {
         const char *name;
         uintptr_t target;

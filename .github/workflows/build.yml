@@ -56,7 +56,7 @@ jobs:
           sys.path.insert(0, 'Tools')
           from embed import VERSION
           if os.environ['RELEASE_TAG'] not in (VERSION, f'v{VERSION}'):
-              raise SystemExit('Release tag must match Config/Standalone.xcconfig and package version')
+              raise SystemExit('Release tag must match Config/Kernel.xcconfig and package version')
           PY
       - name: Show toolchain
         run: |
@@ -65,19 +65,19 @@ jobs:
           xcodebuild -version
           xcrun --show-sdk-version
       - name: Prepare pinned dependencies
-        run: python3 Tools/bootstrap.py --standalone
+        run: python3 Tools/bootstrap.py
       - name: Build and validate Debug
-        run: python3 Tools/standalone.py build --configuration Debug
+        run: python3 Tools/build.py build --configuration Debug
       - name: Build and validate Release
-        run: python3 Tools/standalone.py build --configuration Release
+        run: python3 Tools/build.py build --configuration Release
       - name: Analyze Release
-        run: python3 Tools/standalone.py analyze --configuration Release
+        run: python3 Tools/build.py analyze --configuration Release
       - name: Package and verify
         env:
           CHANNEL: ${{ steps.channel.outputs.value }}
         run: |
-          python3 Tools/standalone.py package --configuration Debug --channel "$CHANNEL"
-          python3 Tools/standalone.py package --configuration Release --channel "$CHANNEL"
+          python3 Tools/build.py package --configuration Debug --channel "$CHANNEL"
+          python3 Tools/build.py package --configuration Release --channel "$CHANNEL"
       - name: Upload packages
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
@@ -93,7 +93,7 @@ jobs:
           name: build-logs
           path: |
             build/*.log
-            build/Standalone-*.json
+            build/*.json
           if-no-files-found: ignore
   publish:
     needs: build

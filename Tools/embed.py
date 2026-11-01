@@ -93,7 +93,7 @@ def route_prefixes(image, label):
 
 
 def generate():
-    validate_payloads(include_optional=False)
+    validate_payloads()
     OUTPUT.mkdir(parents=True, exist_ok=True)
     images = [Image(IMAGES[label]) for label in LABELS]
     parsed = [parse(image) for image in images]

@@ -40,14 +40,14 @@ python3 Extra/collect.py
 ## Building
 
 ```sh
-python3 Tools/bootstrap.py --standalone
-python3 Tools/standalone.py build --configuration Debug
-python3 Tools/standalone.py build --configuration Release
-python3 Tools/standalone.py analyze --configuration Release
-python3 Tools/standalone.py package --configuration Debug
-python3 Tools/standalone.py package --configuration Release
+python3 Tools/bootstrap.py
+python3 Tools/build.py build --configuration Debug
+python3 Tools/build.py build --configuration Release
+python3 Tools/build.py analyze --configuration Release
+python3 Tools/build.py package --configuration Debug
+python3 Tools/build.py package --configuration Release
 ```
 
-Xcode project: `SimpleBCMStandalone.xcodeproj`. Output: `dist`.
+Xcode project: `SimpleBCM.xcodeproj`. Output: `dist`.
 
 [Third-party licenses](NOTICE.md)

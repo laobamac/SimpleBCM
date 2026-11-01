@@ -18,7 +18,7 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
-from standalone import CONFIGURATIONS, VERSION, package_name
+from build import CONFIGURATIONS, VERSION, package_name
 
 
 def prerelease_body(repository, commits):

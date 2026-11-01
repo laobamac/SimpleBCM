@@ -47,8 +47,8 @@ def main():
     commands.append(loaded)
     folder = Path(__file__).resolve().parent
     candidates = [folder / "bcmprobe", folder.parent / "bcmprobe"]
-    candidates += [folder.parent / "build" / tree / "Build/Products" / configuration / "bcmprobe"
-                   for tree in ("Standalone", "DerivedData") for configuration in ("Release", "Debug")]
+    candidates += [folder.parent / "build/DerivedData/Build/Products" / configuration / "bcmprobe"
+                   for configuration in ("Release", "Debug")]
     probe = next((path for path in candidates if path.is_file()), None)
     if probe is not None:
         commands.append([str(probe)])
