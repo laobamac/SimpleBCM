@@ -13,7 +13,7 @@
 #include "Patcher.hpp"
 #include <IOKit/IOService.h>
 
-class IO80211APIUserClient;
+class BCM80211UserClient;
 
 namespace bcm {
 
@@ -67,14 +67,16 @@ extern Counters counters;
 class Bridge {
 public:
     static void initialize();
+    static void trackController(IOService *controller);
+    static void enableNativeSkywalk();
     static bool ready();
     static const UserABI &abi();
     static uint64_t copyAvailability(const Endpoint &endpoint, AvailabilityEvent &event);
     static int refreshAvailability(const Endpoint &endpoint);
     static bool isScalarGet(uint32_t request);
     static bool identify(IOService *interface, InterfaceKind kind, Endpoint &endpoint);
-    static bool addClient(IO80211APIUserClient *client);
-    static void removeClient(IO80211APIUserClient *client);
+    static bool addClient(BCM80211UserClient *client);
+    static void removeClient(BCM80211UserClient *client);
     static int command(const Endpoint &endpoint, bool set, LegacyRequest &request, void *shadow, size_t size);
     static void publish(IOService *service);
     static bool prepareImage(LinkedImage &image, size_t index);

@@ -48,8 +48,11 @@ uintptr_t allocateStub(LinkedImage &image, uintptr_t target) {
 }
 
 bool relocateImage(LinkedImage &image, const LinkedImage *images, size_t imageCount,
-                   const uintptr_t *imports, size_t importCount) {
-    if (!image.payload || !image.memory || !image.editable)
+                   const uintptr_t *imports, size_t importCount,
+                   const uintptr_t *compatibility, size_t compatibilityCount) {
+    if (!image.payload || !image.memory || !image.editable ||
+        (imageCount && !images) || (importCount && !imports) ||
+        (compatibilityCount && !compatibility))
         return false;
     const auto &p = *image.payload;
     if (p.size > p.mappedSize || p.stubOffset < p.size || p.stubOffset > p.mappedSize ||
@@ -65,6 +68,10 @@ bool relocateImage(LinkedImage &image, const LinkedImage *images, size_t imageCo
             if (r.target >= importCount || !imports[r.target])
                 return false;
             target = imports[r.target];
+        } else if (r.image == 254) {
+            if (r.target >= compatibilityCount || !compatibility[r.target])
+                return false;
+            target = compatibility[r.target];
         } else {
             if (r.image >= imageCount || !images[r.image].memory ||
                 r.target >= images[r.image].payload->size)

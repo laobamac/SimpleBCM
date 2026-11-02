@@ -9,7 +9,7 @@
 
 # SimpleBCM
 
-![Version](https://img.shields.io/badge/version-1.0.1-2563eb)
+![Version](https://img.shields.io/badge/version-1.2.0-2563eb)
 ![macOS](https://img.shields.io/badge/macOS-Sonoma%2014%20%7C%20Sequoia%2015%20%7C%20Tahoe%2026-111827)
 ![Architecture](https://img.shields.io/badge/arch-x86__64-6b7280)
 ![OpenCore](https://img.shields.io/badge/boot-OpenCore-16a34a)
@@ -18,26 +18,33 @@
 
 </div>
 
+SimpleBCM 通过 OpenCore 注入恢复 macOS Sonoma、Sequoia 和 Tahoe 的 Broadcom Wi-Fi 支持。同一个 Kext 使用各系统原生 IOSkywalkFamily，无需修改系统卷。
+
 ## 安装
 
 1. 将 `SimpleBCM.kext` 放入 `EFI/OC/Kexts`，替换旧版本。
 2. 禁用 IOSkywalkFamily、IO80211FamilyLegacy、AirPortBrcmNIC 的独立 Add 项。
 3. 合入包内 `config.fragment.plist`，用 `ocvalidate` 检查后重启。
 
-**必须启用 `Kernel → Block`：`Identifier=com.apple.iokit.IOSkywalkFamily`、`Strategy=Exclude`、`Enabled=true`。**
+**删除或禁用已有的 `com.apple.iokit.IOSkywalkFamily` 的 `Kernel → Block` 规则，保持系统原生 IOSkywalkFamily 和 IO80211Family 启用。**
+
+支持 macOS Sonoma 14、Sequoia 15 和 Tahoe 26，不限制系统小版本。使用 `MinKernel=23.0.0`、`MaxKernel=25.99.99`。
 
 需要 AirportBrcmFixup 时，按 `Extra/config.AirportBrcmFixup.fragment.plist` 添加 Lilu、AirportBrcmFixup 和 AirPortBrcmNIC_Injector。
 
 ## 调试
 
-使用 DEBUG 包，添加启动参数 `-simplebcmdbg`，在解压目录运行：
+使用 DEBUG 包，在解压目录运行：
 
 ```sh
 ./Extra/bcmprobe
+./Extra/bcmprobe --scan
 python3 Extra/collect.py
 ```
 
 ## 构建
+
+需要完整 Xcode、Intel Mac 和三个系统的参考内核集合。环境配置见[构建与 CI](Docs/Build.md)。
 
 ```sh
 python3 Tools/bootstrap.py
@@ -50,4 +57,4 @@ python3 Tools/build.py package --configuration Release
 
 Xcode 工程：`SimpleBCM.xcodeproj`。产物目录：`dist`。
 
-[第三方许可](NOTICE.md)
+[实现说明](Docs/Native-Universal.md) · [第三方许可](NOTICE.md)

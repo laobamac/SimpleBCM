@@ -11,7 +11,6 @@ import hashlib
 import json
 import re
 import struct
-from pathlib import Path
 
 from macho import Image
 from profiles import IMAGES, ROOT, SCALAR_GET_REQUESTS, relocations

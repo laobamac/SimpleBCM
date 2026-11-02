@@ -16,12 +16,14 @@ import subprocess
 
 from bootstrap import ROOT, validate_payloads
 from macho import Image
-from profiles import IMAGES, SYMBOLS
+from profiles import IMAGES, SYMBOLS, HARDWARE_VERSION_SYMBOL
+from native_payload import SkywalkPlan, emit_system_profiles, prepare_native_guards
+from system_profiles import SYSTEMS
 
 
 OUTPUT = ROOT / 'build/Embedded'
-LABELS = ['Skywalk', 'Legacy', 'AirPortOriginal', 'AirPort']
-VERSION = '1.0.1'
+LABELS = ['Legacy', 'AirPortOriginal', 'AirPort']
+VERSION = '1.2.0'
 ALIASES = {
     '__ZN26IOSkywalkEthernetInterface18getHardwareAddressEP12ether_addr_t':
         '__ZN26IOSkywalkEthernetInterface18getHardwareAddressEP10ether_addr',
@@ -66,7 +68,7 @@ def parse(image):
 
 
 def route_prefixes(image, label):
-    names = SYMBOLS['Legacy'][:5] if label == 'Legacy' else SYMBOLS['Skywalk'] if label == 'Skywalk' else []
+    names = SYMBOLS['Legacy'][:5] if label == 'Legacy' else [HARDWARE_VERSION_SYMBOL]
     result = []
     for name in names:
         text = subprocess.check_output(['xcrun', 'llvm-objdump', '--arch=x86_64', '-d',
@@ -94,12 +96,22 @@ def route_prefixes(image, label):
 
 def generate():
     validate_payloads()
+    plans = [SkywalkPlan(system) for system in SYSTEMS]
+    plan = plans[-1]
+    for candidate in plans:
+        for field in ('namespace', 'compat', 'methods', 'method_slots', 'native_names', 'client_symbols',
+                      'packet_calls', 'vptr_sites', 'pool_meta', 'pool_type', 'power_template', 'power_states'):
+            if getattr(candidate, field) != getattr(plan, field):
+                raise ValueError(f'Profiles require distinct {field}: {candidate.system}')
+        for cls in ('IOSkywalkNetworkPacket', 'AirPort_Brcm43xxSkywalkPacket'):
+            if candidate.model.tables[cls] != plan.model.tables[cls]:
+                raise ValueError('Packet implementation differs across systems: ' + cls)
     OUTPUT.mkdir(parents=True, exist_ok=True)
     images = [Image(IMAGES[label]) for label in LABELS]
     parsed = [parse(image) for image in images]
     exports = [{name: value for name, kind, _, _, value in symbols if kind & 0xf == 0xf}
                for _, symbols in parsed]
-    native = set()
+    native = set(plan.native_names) | prepare_native_guards(plans)
     vtable_guards = set()
     for index, (image, (commands, symbols)) in enumerate(zip(images, parsed)):
         fields = struct.unpack_from('<18I', next(data for cmd, data in commands if cmd == 11), 8)
@@ -109,7 +121,7 @@ def generate():
             if bits >> 28 == 0:
                 references[offset] = symbols[bits & 0xffffff]
         boundaries = sorted(set(image.symbols.values()))
-        internal = set().union(*[set(exports[j]) for j in range(min(index, 2))], set(exports[index]))
+        internal = set(exports[index]) | (set(exports[0]) if index else set())
         for name, address in image.symbols.items():
             child = re.fullmatch(r'__ZN(\d+)(.*)10superClassE', name)
             if not child or len(child[2]) != int(child[1]) or address not in references:
@@ -119,7 +131,7 @@ def generate():
                 continue
             child_name = '__ZTV' + child[1] + child[2]
             parent_name = '__ZTV' + parent[1] + parent[2]
-            if child_name not in image.symbols or parent_name in internal:
+            if child_name not in image.symbols or parent_name in internal or 'IOSkywalk' in parent_name:
                 continue
             start = image.symbols[child_name]
             end = min(value for value in boundaries if value > start)
@@ -135,18 +147,24 @@ def generate():
             if kind & 0xf != 1:
                 continue
             name = ALIASES.get(name, name)
-            if not any(name in exports[j] for j in range(min(index, 2))):
+            if plan.resolve(name) is None and not (index and name in exports[0]):
                 native.add(name)
     native = sorted(native)
     native_index = {name: i for i, name in enumerate(native)}
-    cpp = [header('Payloads.cpp'), '#include "Payload.hpp"', 'namespace bcm {']
+    cpp = [header('Payloads.cpp'), '#include "Payload.hpp"', '#include "NativeProfile.hpp"', 'namespace bcm {']
     assembly = [header('Payloads.S'), '.section __TEXT,__const', '.p2align 3']
     descriptors = []
     manifest = {'version': VERSION, 'nativeImports': native, 'payloads': [], 'driverLoading': 'embedded',
-                'hardwareValidation': 'pending'}
+                'hardwareValidation': 'not-run-by-build', 'skywalkBackend': 'native', 'nativeAdapter': plan.manifest(),
+                'systemProfiles': [candidate.manifest() for candidate in plans]}
+    for field in ('system', 'kernel', 'build', 'nativeUUID', 'wirelessUUID', 'ethernetSize', 'poolSize',
+                  'nativeSlotCount', 'ethernetLinkSymbol', 'ethernetLinkSlot', 'airPortPayloadIndex'):
+        del manifest['nativeAdapter'][field]
     library_versions = {}
     library_ids = set()
     for index, (label, image, (commands, symbols)) in enumerate(zip(LABELS, images, parsed)):
+        logical_index = int(index != 0)
+        image_plan = plans[0] if label == 'AirPortOriginal' else plan
         info = plistlib.loads((image.path.parent.parent / 'Info.plist').read_bytes())
         library_ids.add(info['CFBundleIdentifier'])
         for library, version in info['OSBundleLibraries'].items():
@@ -165,7 +183,7 @@ def generate():
                 if ext:
                     name, stype, _, _, value = symbols[bits & 0xffffff]
                     if stype & 0xe == 0xe:
-                        provider, target = index, value
+                        provider, target = logical_index, value
                     else:
                         assert stype & 0xe == 0 and value == 0
                         if name in ALIASES:
@@ -173,12 +191,18 @@ def generate():
                             expected = image.symbols['__ZTV34AirPort_Brcm43xxLLSkywalkInterface'] + 16 + 0xa70 + alias_index * 16
                             assert address == expected and width == 8 and addend == 0
                             name = ALIASES[name]
-                        candidates = [(j, exports[j][name]) for j in range(min(index, 2)) if name in exports[j]]
-                        provider, target = candidates[0] if candidates else (255, native_index[name])
+                        candidates = [(0, exports[0][name])] if index and name in exports[0] else []
+                        compatibility = plan.resolve(name)
+                        if candidates:
+                            provider, target = candidates[0]
+                        elif compatibility is not None:
+                            provider, target = 254, compatibility
+                        else:
+                            provider, target = 255, native_index[name]
                 else:
                     assert kind == 0 and 0 < (bits & 0xffffff) <= len(image.sections)
-                    provider, target, addend = index, addend, 0
-                assert provider == 255 or 0 <= target < max(a + s for _, a, s, _, _ in image.segments)
+                    provider, target, addend = logical_index, addend, 0
+                assert provider in (254, 255) or 0 <= target < max(a + s for _, a, s, _, _ in image.segments)
                 relocations.append((address, target, addend, provider, width))
                 branches += width == 4
 
@@ -233,6 +257,7 @@ def generate():
         struct.pack_into('<I', expanded, 24, struct.unpack_from('<I', expanded, 24)[0] & ~0x80000000)
         kmod = image.symbols['_kmod_info']
         assert kmod + 196 <= size
+        renamed = image_plan.namespace_payload(label, expanded)
         routes = route_prefixes(image, label)
         blob = OUTPUT / (label + '.bin')
         blob.write_bytes(expanded)
@@ -243,6 +268,8 @@ def generate():
         cpp.append('};')
         cpp.append(f'static const uint32_t values{index}[] = {{{", ".join(map(str, symbol_values))}}};')
         wanted = set(SYMBOLS[label]) | {'_kmod_info'}
+        if label != 'Legacy':
+            wanted.add(HARDWARE_VERSION_SYMBOL)
         named = sorted((n, image.symbols[n]) for n in wanted)
         cpp.append(f'static const Symbol symbols{index}[] = {{')
         cpp.extend(f'{{{json.dumps(n)}, {v}}},' for n, v in named)
@@ -250,6 +277,8 @@ def generate():
         cpp.append(f'static const RoutePrefix routes{index}[] = {{{", ".join("{" + str(a) + ", " + str(n) + "}" for a, n in routes) if routes else "{0, 0}"}}};')
         info['OSBundleLibraries']['cn.laobamac.SimpleBCM'] = VERSION
         info['OSBundleRequired'] = 'Root'
+        if label == 'Legacy':
+            info['IOKitPersonalities'] = {}
         plist = plistlib.dumps(info, sort_keys=False).decode()
         literal = json.dumps(plist).replace('?', '\\?')
         cpp.append(f'static const char plist{index}[] = {literal};')
@@ -258,19 +287,27 @@ def generate():
         manifest['payloads'].append({'label': label, 'identifier': info['CFBundleIdentifier'], 'sourceSHA256': sha,
                                     'expandedSHA256': hashlib.sha256(expanded).hexdigest(), 'size': size,
                                     'mappedSize': size + stub_size, 'relocations': len(relocations), 'routes': routes,
-                                    'kmodOffset': kmod})
-    cpp += ['const Payload payloads[4] = {', ',\n'.join(descriptors), '};',
+                                    'kmodOffset': kmod, 'namespacedClassStrings': renamed, 'powerDomainPatches': []})
+    cpp += ['const Payload payloads[3] = {', ',\n'.join(descriptors), '};',
             f'const uint32_t nativeImportCount = {len(native)};', 'const char *const nativeImportNames[] = {',
             ',\n'.join(json.dumps(n) for n in native), '};',
             'const NativeVtableGuard nativeVtableGuards[] = {',
             ',\n'.join(f'{{{native_index[p]}, {o}, {native_index[m]}}}' for p, o, m in sorted(vtable_guards)),
-            '};', f'const uint32_t nativeVtableGuardCount = {len(vtable_guards)};', '}']
+            '};', f'const uint32_t nativeVtableGuardCount = {len(vtable_guards)};']
+    sky_cpp, sky_assembly = plan.emit(native_index)
+    cpp += sky_cpp + emit_system_profiles(plans, native_index) + ['}']
     assembly += ['.section __DATA_CONST,__const', '.p2align 3', '.globl _bcmNativeImports', '_bcmNativeImports:']
     assembly.extend('.quad ' + name for name in native)
+    assembly += sky_assembly
     (OUTPUT / 'Payloads.cpp').write_text('\n'.join(cpp) + '\n')
     (OUTPUT / 'Payloads.S').write_text('\n'.join(assembly) + '\n')
     manifest['nativeLibraries'] = {name: sorted(versions) for name, versions in library_versions.items() if name not in library_ids}
     manifest['nativeVtableGuards'] = sorted(vtable_guards)
+    manifest['nativeRuntimeGuards'] = {p.system: {
+        'vtables': p.vtable_guards, 'classes': p.class_guards,
+        'nativeOverrides': p.unchecked_overrides,
+        'linkBytes': p.link_bytes.hex(), 'linkMask': p.link_mask.hex(), 'linkReferences': p.link_references,
+    } for p in plans}
     (OUTPUT / 'manifest.json').write_text(json.dumps(manifest, indent=2) + '\n')
     print(f'Embedded {len(images)} payloads, {len(native)} native imports; output: {OUTPUT}')
 

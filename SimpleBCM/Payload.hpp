@@ -69,7 +69,7 @@ struct LinkedImage {
     bool editable;
 };
 
-extern const Payload payloads[4];
+extern const Payload payloads[3];
 extern "C" const uintptr_t bcmNativeImports[];
 extern const uint32_t nativeImportCount;
 extern const char *const nativeImportNames[];
@@ -77,7 +77,8 @@ extern const NativeVtableGuard nativeVtableGuards[];
 extern const uint32_t nativeVtableGuardCount;
 
 bool relocateImage(LinkedImage &image, const LinkedImage *images, size_t imageCount,
-                   const uintptr_t *imports, size_t importCount);
+                   const uintptr_t *imports, size_t importCount,
+                   const uintptr_t *compatibility, size_t compatibilityCount);
 uintptr_t allocateStub(LinkedImage &image, uintptr_t target);
 uintptr_t findSymbol(const LinkedImage &image, const char *name);
 uint64_t payloadChecksum(const uint8_t *bytes, size_t length);

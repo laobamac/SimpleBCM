@@ -9,6 +9,8 @@
 #include "Loader.hpp"
 #include "Payload.hpp"
 #include "Bridge.hpp"
+#include "NativeSkywalk.hpp"
+#include "NativeUserClient.hpp"
 #include <IOKit/IOCatalogue.h>
 #include <libkern/c++/OSUnserialize.h>
 #include <libkern/c++/OSNumber.h>
@@ -33,9 +35,9 @@ extern "C" OSReturn bcmLoadKext(const char *, bool, bool, uint8_t, uint8_t, OSAr
 namespace bcm {
 
 static constexpr int KCKindUnknown = 0;
-static LinkedImage images[4];
-static OSObject *modules[4];
-static uint32_t selected[3];
+static LinkedImage images[2];
+static OSObject *modules[2];
+static constexpr uint32_t selected[] = {0, 1};
 static const char *status = "NotPrepared";
 static const char *failedModule = "";
 static uint32_t lastError;
@@ -156,14 +158,16 @@ bool preparePayloads() {
     auto kernel = getKernelVersion();
     if (kernel < 23 || kernel > 25)
         return fail("UnsupportedKernel", "SimpleBCM", kernel);
-    selected[0] = 0;
-    selected[1] = 1;
-    selected[2] = kernel == 25 ? 3 : 2;
+    if (!validateNativeSkywalk())
+        return fail("UnsupportedNativeSkywalk", "com.apple.iokit.IOSkywalkFamily");
+    if (!prepareNativeUserClients())
+        return fail("UnsupportedNativeWireless", "com.apple.iokit.IO80211Family");
     for (auto index : selected) {
-        auto existing = bcmLookupKext(payloads[index].identifier);
+        const auto &payload = payloads[index ? nativeSystem->airPortPayloadIndex : 0];
+        auto existing = bcmLookupKext(payload.identifier);
         if (existing) {
             existing->release();
-            return fail("ConflictingModule", payloads[index].identifier);
+            return fail("ConflictingModule", payload.identifier);
         }
     }
     for (uint32_t i = 0; i < nativeVtableGuardCount; ++i) {
@@ -178,7 +182,7 @@ bool preparePayloads() {
     status = "Mapping";
     for (auto index : selected) {
         auto &image = images[index];
-        image.payload = &payloads[index];
+        image.payload = &payloads[index ? nativeSystem->airPortPayloadIndex : 0];
         vm_offset_t address = 0;
         auto result = kext_alloc(&address, image.payload->mappedSize, false);
         if (result != KERN_SUCCESS)
@@ -191,13 +195,16 @@ bool preparePayloads() {
     }
     status = "Linking";
     for (auto index : selected) {
-        if (!relocateImage(images[index], images, 4, bcmNativeImports, nativeImportCount))
+        if (!relocateImage(images[index], images, 2, bcmNativeImports, nativeImportCount,
+                           bcmCompatibilityImports, compatibilityImportCount))
             return fail("LinkFailed", images[index].payload->identifier);
     }
     Bridge::initialize();
     status = "Patching";
-    if (!Bridge::prepareImage(images[1], 0) || !Bridge::prepareImage(images[0], 1) ||
-        !Bridge::prepareImage(images[selected[2]], 2) || !Bridge::ready())
+    if (!prepareNativeSkywalk(images, 2))
+        return fail("NativeAdapterFailed", "SimpleBCM");
+    Bridge::enableNativeSkywalk();
+    if (!Bridge::prepareImage(images[0], 0) || !Bridge::prepareImage(images[1], 1) || !Bridge::ready())
         return fail("BridgeFailed", "SimpleBCM");
     status = "Registering";
     for (auto index : selected) {
@@ -216,30 +223,30 @@ bool startPayloads() {
         return false;
     status = "Loading";
     for (auto index : selected) {
-        auto result = bcmLoadKext(payloads[index].identifier, false, true, 2, 2, nullptr);
+        auto result = bcmLoadKext(images[index].payload->identifier, false, true, 2, 2, nullptr);
         if (result != KERN_SUCCESS)
-            return fail("LoadFailed", payloads[index].identifier, result);
+            return fail("LoadFailed", images[index].payload->identifier, result);
         ++loadedCount;
     }
     status = "ValidatingMappings";
     for (auto index : selected) {
         auto result = bcmValidateKextMapping(modules[index], true);
         if (result != KERN_SUCCESS)
-            return fail("MappingValidationFailed", payloads[index].identifier, result);
+            return fail("MappingValidationFailed", images[index].payload->identifier, result);
         ++validatedCount;
     }
     status = "Starting";
     for (auto index : selected) {
-        auto result = bcmLoadKext(payloads[index].identifier, false, true, 0, 2, nullptr);
+        auto result = bcmLoadKext(images[index].payload->identifier, false, true, 0, 2, nullptr);
         if (result != KERN_SUCCESS)
-            return fail("StartFailed", payloads[index].identifier, result);
+            return fail("StartFailed", images[index].payload->identifier, result);
     }
     status = "Matching";
     for (auto index : selected) {
-        auto result = bcmLoadKext(payloads[index].identifier, false, true, 0, 0, nullptr);
+        auto result = bcmLoadKext(images[index].payload->identifier, false, true, 0, 0, nullptr);
         if (result != KERN_SUCCESS)
-            return fail("MatchingFailed", payloads[index].identifier, result);
-        gIOCatalogue->moduleHasLoaded(payloads[index].identifier);
+            return fail("MatchingFailed", images[index].payload->identifier, result);
+        gIOCatalogue->moduleHasLoaded(images[index].payload->identifier);
     }
     started = true;
     status = "StartedAwaitingHardware";
@@ -261,7 +268,9 @@ void publishLoader(IOService *service) {
     service->setProperty("EmbeddedModulesStarted", started);
     service->setProperty("EmbeddedModulesLoaded", loadedCount, 32);
     service->setProperty("EmbeddedMappingsValidated", validatedCount, 32);
-    service->setProperty("AirPortSHA256", payloads[selected[2]].sha256);
+    if (images[1].payload)
+        service->setProperty("AirPortSHA256", images[1].payload->sha256);
+    publishNativeSkywalk(service);
 }
 
 }

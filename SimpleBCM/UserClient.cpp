@@ -10,9 +10,9 @@
 #include <libkern/c++/OSBoolean.h>
 #include <sys/errno.h>
 
-OSDefineMetaClassAndStructors(IO80211APIUserClient, IOUserClient)
+OSDefineMetaClassAndStructors(BCM80211UserClient, IOUserClient)
 
-bool IO80211APIUserClient::entitled(const char *entitlement) const {
+bool BCM80211UserClient::entitled(const char *entitlement) const {
     auto value = copyClientEntitlement(ownerTask, entitlement);
     const bool allowed = value == kOSBooleanTrue;
     if (value)
@@ -20,13 +20,13 @@ bool IO80211APIUserClient::entitled(const char *entitlement) const {
     return allowed;
 }
 
-IOReturn IO80211APIUserClient::create(IOService *provider, task_t task, void *token,
+IOReturn BCM80211UserClient::create(IOService *provider, task_t task, void *token,
                                    OSDictionary *properties, bcm::InterfaceKind kind,
                                    IOUserClient **result) {
     if (!result || !task)
         return kIOReturnBadArgument;
     *result = nullptr;
-    auto client = new IO80211APIUserClient;
+    auto client = new BCM80211UserClient;
     if (!client)
         return kIOReturnNoMemory;
     client->ownerTask = task;
@@ -44,6 +44,7 @@ IOReturn IO80211APIUserClient::create(IOService *provider, task_t task, void *to
         return kIOReturnUnsupported;
     }
     client->endpoint.controller->retain();
+    bcm::Bridge::trackController(client->endpoint.controller);
     client->setProperty("IOUserClientDefaultLocking", kOSBooleanTrue);
     if (client->attach(provider)) {
         if (client->start(provider)) {
@@ -57,7 +58,7 @@ IOReturn IO80211APIUserClient::create(IOService *provider, task_t task, void *to
     return kIOReturnError;
 }
 
-bool IO80211APIUserClient::start(IOService *provider) {
+bool BCM80211UserClient::start(IOService *provider) {
     if (!IOUserClient::start(provider))
         return false;
     eventLock = IOLockAlloc();
@@ -75,7 +76,7 @@ bool IO80211APIUserClient::start(IOService *provider) {
     return registered;
 }
 
-void IO80211APIUserClient::close() {
+void BCM80211UserClient::close() {
     if (!eventLock)
         return;
     IOLockLock(eventLock);
@@ -93,12 +94,12 @@ void IO80211APIUserClient::close() {
     }
 }
 
-IOReturn IO80211APIUserClient::closeAction(OSObject *owner, void *, void *, void *, void *) {
-    static_cast<IO80211APIUserClient *>(owner)->close();
+IOReturn BCM80211UserClient::closeAction(OSObject *owner, void *, void *, void *, void *) {
+    static_cast<BCM80211UserClient *>(owner)->close();
     return kIOReturnSuccess;
 }
 
-IOReturn IO80211APIUserClient::clientClose() {
+IOReturn BCM80211UserClient::clientClose() {
     if (commandGate && gateAdded)
         commandGate->runAction(closeAction);
     else
@@ -108,11 +109,11 @@ IOReturn IO80211APIUserClient::clientClose() {
     return kIOReturnSuccess;
 }
 
-IOReturn IO80211APIUserClient::clientDied() {
+IOReturn BCM80211UserClient::clientDied() {
     return clientClose();
 }
 
-void IO80211APIUserClient::stop(IOService *provider) {
+void BCM80211UserClient::stop(IOService *provider) {
     if (commandGate && gateAdded) {
         commandGate->runAction(closeAction);
         workLoop->removeEventSource(commandGate);
@@ -123,7 +124,7 @@ void IO80211APIUserClient::stop(IOService *provider) {
     IOUserClient::stop(provider);
 }
 
-void IO80211APIUserClient::free() {
+void BCM80211UserClient::free() {
     close();
     if (commandGate) {
         if (gateAdded && workLoop)
@@ -143,7 +144,7 @@ void IO80211APIUserClient::free() {
     IOUserClient::free();
 }
 
-IOReturn IO80211APIUserClient::externalMethod(uint32_t selector, IOExternalMethodArguments *arguments,
+IOReturn BCM80211UserClient::externalMethod(uint32_t selector, IOExternalMethodArguments *arguments,
                                            IOExternalMethodDispatch *, OSObject *, void *) {
     if (!arguments || !commandGate || !gateAdded || selector >= bcm::Bridge::abi().selectorCount)
         return kIOReturnBadArgument;
@@ -151,12 +152,12 @@ IOReturn IO80211APIUserClient::externalMethod(uint32_t selector, IOExternalMetho
     return commandGate->runAction(dispatchAction, reinterpret_cast<void *>(static_cast<uintptr_t>(selector)), arguments);
 }
 
-IOReturn IO80211APIUserClient::dispatchAction(OSObject *owner, void *selector, void *arguments, void *, void *) {
-    return static_cast<IO80211APIUserClient *>(owner)->dispatch(static_cast<uint32_t>(reinterpret_cast<uintptr_t>(selector)),
+IOReturn BCM80211UserClient::dispatchAction(OSObject *owner, void *selector, void *arguments, void *, void *) {
+    return static_cast<BCM80211UserClient *>(owner)->dispatch(static_cast<uint32_t>(reinterpret_cast<uintptr_t>(selector)),
                                                             static_cast<IOExternalMethodArguments *>(arguments));
 }
 
-IOReturn IO80211APIUserClient::dispatch(uint32_t selector, IOExternalMethodArguments *arguments) {
+IOReturn BCM80211UserClient::dispatch(uint32_t selector, IOExternalMethodArguments *arguments) {
     if (closed || isInactive() || !bcm::Bridge::ready())
         return kIOReturnNotOpen;
     const auto method = static_cast<bcm::Selector>(selector);
@@ -240,7 +241,7 @@ static IOReturn runRoamProfiles(const bcm::Endpoint &endpoint, bool set, bcm::Le
     return result;
 }
 
-IOReturn IO80211APIUserClient::runCommand(IOExternalMethodArguments *arguments, size_t capacity) {
+IOReturn BCM80211UserClient::runCommand(IOExternalMethodArguments *arguments, size_t capacity) {
     const auto packetSize = sizeof(bcm::CommandHeader) + capacity + sizeof(bcm::Request);
     const size_t inputSize = arguments->structureInputDescriptor ? arguments->structureInputDescriptor->getLength() : arguments->structureInputSize;
     const size_t outputSize = arguments->structureOutputDescriptor ? arguments->structureOutputDescriptorSize : arguments->structureOutputSize;
@@ -400,7 +401,7 @@ done:
     return result;
 }
 
-IOReturn IO80211APIUserClient::startMonitor() {
+IOReturn BCM80211UserClient::startMonitor() {
     bcm::Bridge::refreshAvailability(endpoint);
     IOLockLock(eventLock);
     if (!ringMemory)
@@ -434,7 +435,7 @@ IOReturn IO80211APIUserClient::startMonitor() {
     return kIOReturnSuccess;
 }
 
-IOReturn IO80211APIUserClient::subscribe(IOExternalMethodArguments *arguments) {
+IOReturn BCM80211UserClient::subscribe(IOExternalMethodArguments *arguments) {
     if (!arguments->asyncWakePort || !arguments->asyncReference || arguments->asyncReferenceCount != kOSAsyncRef64Count)
         return kIOReturnBadArgument;
     IOLockLock(eventLock);
@@ -448,7 +449,7 @@ IOReturn IO80211APIUserClient::subscribe(IOExternalMethodArguments *arguments) {
     return kIOReturnSuccess;
 }
 
-IOReturn IO80211APIUserClient::clientMemoryForType(UInt32 type, IOOptionBits *options, IOMemoryDescriptor **memory) {
+IOReturn BCM80211UserClient::clientMemoryForType(UInt32 type, IOOptionBits *options, IOMemoryDescriptor **memory) {
     if (!options || !memory || !eventLock)
         return kIOReturnBadArgument;
     *memory = nullptr;
@@ -465,7 +466,7 @@ IOReturn IO80211APIUserClient::clientMemoryForType(UInt32 type, IOOptionBits *op
     return status;
 }
 
-void IO80211APIUserClient::receive(IOService *controller, const char *name, uint32_t event,
+void BCM80211UserClient::receive(IOService *controller, const char *name, uint32_t event,
                                  const void *payload, size_t length, uint64_t seconds, uint64_t microseconds, uint64_t serial) {
     if (endpoint.controller != controller || strncmp(name, endpoint.name, sizeof(endpoint.name)))
         return;
@@ -487,7 +488,7 @@ void IO80211APIUserClient::receive(IOService *controller, const char *name, uint
     IOLockUnlock(eventLock);
 }
 
-void IO80211APIUserClient::notifyAvailable() {
+void BCM80211UserClient::notifyAvailable() {
     const auto status = sendAsyncResult64WithOptions(asyncReference, bcm::EventNotification, nullptr, 0, kIOUserNotifyOptionCanDrop);
     auto counter = status == kIOReturnSuccess ? &bcm::counters.notifications : &bcm::counters.notificationErrors;
     __atomic_fetch_add(counter, 1ULL, __ATOMIC_RELAXED);

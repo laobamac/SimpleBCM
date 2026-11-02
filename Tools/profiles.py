@@ -40,10 +40,10 @@ SYMBOLS = {
         "__ZN23IO80211SkywalkInterface10getBSDNameEv",
         "__ZN16IO80211Interface14performCommandEP19IONetworkControllermPvS2_",
     ],
-    "Skywalk": ["__ZN26IOSkywalkEthernetInterface13newUserClientEP4taskPvjP12OSDictionaryPP12IOUserClient"],
     "AirPort": ["_bcm_decode_anqp_nai_realm_print", "__dma_detach", "_dma64_txfast", "__dma_rxfill", "__dma_getnextrxp"],
 }
 SYMBOLS["AirPortOriginal"] = SYMBOLS["AirPort"]
+HARDWARE_VERSION_SYMBOL = "__ZN15AirPort_BrcmNIC19getHARDWARE_VERSIONEP8OSObjectP23apple80211_version_data"
 SCALAR_GET_REQUESTS = [5, 8, 13, 15, 18, 21, 26, 28, 31, 33, 34, 35, 36, 41, 45, 50, 52, 55, 56, 57, 58, 59, 60,
                        63, 64, 70, 71, 72, 82, 87, 88, 96, 100, 101, 235, 241, 256, 258, 259, 261, 265, 267, 336, 353, 369]
 
@@ -76,6 +76,8 @@ def main():
     lines = ["//", "//  Profiles.hpp", "//  SimpleBCM", "//", "//  Created by laobamac on 2026/9/15.", "//  Copyright © 2026 laobamac. All rights reserved.", "//", "", "#ifndef SIMPLEBCM_PROFILES_HPP", "#define SIMPLEBCM_PROFILES_HPP", "", "#include <stdint.h>", "", "namespace bcm {", "struct ByteGuard { uint32_t offset; uint8_t bytes[32]; uint8_t mask[32]; };", "struct CopySite { uint32_t offset; bool output; };", ""]
     manifest = {"copyright": "Copyright © 2026 laobamac. All rights reserved.", "supportedKernel": "23.x / 24.x / 25.x", "images": {}}
     for label, path in IMAGES.items():
+        if label not in SYMBOLS:
+            continue
         image = Image(path)
         relocs = relocations(image)
         guards = []

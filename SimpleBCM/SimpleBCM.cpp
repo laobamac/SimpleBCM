@@ -70,7 +70,11 @@ OSDefineMetaClassAndStructors(SimpleBCM, IOService)
 extern "C" kern_return_t SimpleBCM_kern_start(kmod_info_t *, void *) {
     int value = 0;
     enabled = !PE_parse_boot_argn("-simplebcmoff", &value, sizeof(value));
+#ifdef DEBUG
+    simpleBCMDebug = true;
+#else
     simpleBCMDebug = PE_parse_boot_argn("-simplebcmdbg", &value, sizeof(value));
+#endif
     if (enabled) {
         initialized = true;
         bcm::preparePayloads();

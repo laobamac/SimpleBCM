@@ -7,8 +7,11 @@
 //
 
 #include "Bridge.hpp"
+#include "NativeSkywalk.hpp"
+#include "NativeUserClient.hpp"
 #include "Profiles.hpp"
 #include "UserClient.hpp"
+#include "HardwareIdentity.hpp"
 #include <IOKit/IOLib.h>
 #include <IOKit/IOWorkLoop.h>
 #include <libkern/c++/OSData.h>
@@ -24,10 +27,11 @@ namespace bcm {
 
 Counters counters {};
 static uint32_t state;
+static IOService *observedController;
 static const char *failure = "WaitingForDependencies";
 static IOSimpleLock *contextLock;
 static IOSimpleLock *hubLock;
-static IO80211APIUserClient *clients[64];
+static BCM80211UserClient *clients[64];
 static thread_call_t eventCall;
 
 struct CopyContext {
@@ -156,7 +160,7 @@ bool Bridge::identify(IOService *interface, InterfaceKind kind, Endpoint &endpoi
             break;
         case InterfaceKind::Skywalk:
             for (IOService *parent = interface->getProvider(); parent; parent = parent->getProvider()) {
-                if (parent->metaCast("IO80211Controller")) {
+                if (parent->metaCast("AirPort_BrcmNIC")) {
                     controller = parent;
                     break;
                 }
@@ -189,28 +193,67 @@ bool Bridge::identify(IOService *interface, InterfaceKind kind, Endpoint &endpoi
     return true;
 }
 
+using HardwareVersion = IOReturn (*)(IOService *, OSObject *, void *);
+static HardwareVersion originalHardwareVersion;
+
+static IOReturn getHardwareVersion(IOService *controller, OSObject *interface, void *output) {
+    auto result = originalHardwareVersion(controller, interface, output);
+    if (result != kIOReturnSuccess || !output)
+        return result;
+    auto bytes = static_cast<uint8_t *>(output);
+    uint16_t length;
+    memcpy(&length, bytes + 4, sizeof(length));
+    auto text = reinterpret_cast<char *>(bytes + 6);
+    HardwareIdentity identity {};
+    if (readUInt32(bytes) != 1 || length >= 256 || text[length] != '\0' ||
+        !decodeHardwareIdentity(text, length, identity))
+        return result;
+    controller->setProperty("SimpleBCMOriginalHardwareVersion", text);
+    int count;
+    if (identity.boardVendor == 0x106b)
+        count = snprintf(text, 256, "AirPort Extreme (0x%X, 0x%X)", identity.vendor, identity.board);
+    else
+        count = snprintf(text, 256, "Broadcom BCM%u (%04x:%04x)", identity.chip, identity.vendor, identity.device);
+    length = static_cast<uint16_t>(count);
+    memcpy(bytes + 4, &length, sizeof(length));
+    return result;
+}
+
 static IOReturn newClassicClient(IOService *self, task_t task, void *token, uint32_t type,
                                 OSDictionary *properties, IOUserClient **result) {
-    if (type || !Bridge::ready())
-        return originalClassicClient(self, task, token, type, properties, result);
-    return IO80211APIUserClient::create(self, task, token, properties, InterfaceKind::Classic, result);
+    auto status = type || !Bridge::ready() ?
+        originalClassicClient(self, task, token, type, properties, result) :
+        BCM80211UserClient::create(self, task, token, properties, InterfaceKind::Classic, result);
+    return wrapNativeUserClient(status, task, token, type, properties, result);
 }
 
 static IOReturn newVirtualClient(IOService *self, task_t task, void *token, uint32_t type,
                                 OSDictionary *properties, IOUserClient **result) {
-    if (type || !Bridge::ready())
-        return originalVirtualClient(self, task, token, type, properties, result);
-    return IO80211APIUserClient::create(self, task, token, properties, InterfaceKind::Virtual, result);
+    auto status = type || !Bridge::ready() ?
+        originalVirtualClient(self, task, token, type, properties, result) :
+        BCM80211UserClient::create(self, task, token, properties, InterfaceKind::Virtual, result);
+    return wrapNativeUserClient(status, task, token, type, properties, result);
 }
 
 static IOReturn newSkywalkClient(IOService *self, task_t task, void *token, uint32_t type,
                                 OSDictionary *properties, IOUserClient **result) {
-    if (type || !Bridge::ready() || !self->metaCast("IO80211SkywalkInterface"))
-        return originalSkywalkClient(self, task, token, type, properties, result);
-    return IO80211APIUserClient::create(self, task, token, properties, InterfaceKind::Skywalk, result);
+    auto status = type || !Bridge::ready() || !self->metaCast("BCMLegacyInterface") ?
+        originalSkywalkClient(self, task, token, type, properties, result) :
+        BCM80211UserClient::create(self, task, token, properties, InterfaceKind::Skywalk, result);
+    return wrapNativeUserClient(status, task, token, type, properties, result);
 }
 
-bool Bridge::addClient(IO80211APIUserClient *client) {
+IOReturn createSkywalkUserClient(IOService *self, task_t task, void *token, uint32_t type,
+                                OSDictionary *properties, IOUserClient **result) {
+    return newSkywalkClient(self, task, token, type, properties, result);
+}
+
+void Bridge::enableNativeSkywalk() {
+    originalSkywalkClient = nativeSkywalkUserClient;
+    __atomic_fetch_or(&state, 2U, __ATOMIC_RELEASE);
+}
+
+bool Bridge::addClient(BCM80211UserClient *client) {
     bool added = false;
     const auto interruptState = IOSimpleLockLockDisableInterrupt(hubLock);
     for (auto &entry : clients) {
@@ -225,8 +268,8 @@ bool Bridge::addClient(IO80211APIUserClient *client) {
     return added;
 }
 
-void Bridge::removeClient(IO80211APIUserClient *client) {
-    IO80211APIUserClient *removed = nullptr;
+void Bridge::removeClient(BCM80211UserClient *client) {
+    BCM80211UserClient *removed = nullptr;
     const auto interruptState = IOSimpleLockLockDisableInterrupt(hubLock);
     for (auto &entry : clients) {
         if (entry == client) {
@@ -283,7 +326,7 @@ static IOReturn captureJoinEvent(OSObject *, void *argument, void *, void *, voi
 static void drainEvents(thread_call_param_t, thread_call_param_t) {
     PendingEvent event;
     for (;;) {
-        IO80211APIUserClient *targets[64];
+        BCM80211UserClient *targets[64];
         size_t count = 0;
         const auto interruptState = IOSimpleLockLockDisableInterrupt(hubLock);
         if (pendingRead == pendingWrite) {
@@ -556,7 +599,7 @@ void Bridge::disable(const char *reason) {
 }
 
 bool Bridge::prepareImage(LinkedImage &image, size_t index) {
-    if (index >= 3 || !image.editable || !activeABI)
+    if (index >= 2 || !image.editable || !activeABI)
         return false;
     KernelPatcher patcher(image);
     patchImage(patcher, index, image.address, image.payload->mappedSize);
@@ -598,20 +641,6 @@ void Bridge::patchImage(KernelPatcher &patcher, size_t index, mach_vm_address_t 
         }
         __atomic_fetch_or(&state, 1U, __ATOMIC_RELEASE);
     } else if (index == 1) {
-        if (!validate(address, size, SkywalkGuards, arrsize(SkywalkGuards))) {
-            reject("SkywalkBinaryMismatch");
-            return;
-        }
-        KernelPatcher::RouteRequest routes[] = {
-            {"__ZN26IOSkywalkEthernetInterface13newUserClientEP4taskPvjP12OSDictionaryPP12IOUserClient", newSkywalkClient, originalSkywalkClient}
-        };
-        if (!patcher.routeMultipleLong(index, routes, address, size)) {
-            patcher.clearError();
-            reject("SkywalkRoutingFailed");
-            return;
-        }
-        __atomic_fetch_or(&state, 2U, __ATOMIC_RELEASE);
-    } else if (index == 2) {
         const bool original = abi().backend == AirPortBackend::Original;
         const auto guards = original ? AirPortOriginalGuards : AirPortGuards;
         const auto guardCount = original ? arrsize(AirPortOriginalGuards) : arrsize(AirPortGuards);
@@ -624,6 +653,15 @@ void Bridge::patchImage(KernelPatcher &patcher, size_t index, mach_vm_address_t 
         if (!patchCopies(patcher, address, size, copies, copyCount)) {
             patcher.clearError();
             reject("AirPortCopyRoutingFailed");
+            return;
+        }
+        KernelPatcher::RouteRequest routes[] = {
+            {"__ZN15AirPort_BrcmNIC19getHARDWARE_VERSIONEP8OSObjectP23apple80211_version_data",
+             getHardwareVersion, originalHardwareVersion}
+        };
+        if (!patcher.routeMultipleLong(index, routes, address, size)) {
+            patcher.clearError();
+            reject("HardwareDescriptionRoutingFailed");
             return;
         }
         __atomic_fetch_or(&state, 4U, __ATOMIC_RELEASE);
@@ -650,10 +688,39 @@ void Bridge::initialize() {
     }
 }
 
+void Bridge::trackController(IOService *controller) {
+    if (!controller || !hubLock)
+        return;
+    const auto interruptState = IOSimpleLockLockDisableInterrupt(hubLock);
+    if (!observedController) {
+        controller->retain();
+        observedController = controller;
+    }
+    IOSimpleLockUnlockEnableInterrupt(hubLock, interruptState);
+}
+
 void Bridge::publish(IOService *service) {
     service->setProperty("Status", __atomic_load_n(&failure, __ATOMIC_ACQUIRE));
     service->setProperty("PatchState", __atomic_load_n(&state, __ATOMIC_ACQUIRE), 32);
     service->setProperty("SupportedKernel", "23.x / 24.x / 25.x");
+    service->setProperty("AdapterVersion", "1.2.0");
+    service->setProperty("NativePowerDomainPatched", false);
+    IOService *controller = nullptr;
+    if (hubLock) {
+        const auto interruptState = IOSimpleLockLockDisableInterrupt(hubLock);
+        controller = observedController;
+        if (controller)
+            controller->retain();
+        IOSimpleLockUnlockEnableInterrupt(hubLock, interruptState);
+    }
+    if (controller) {
+        service->setProperty("WirelessControllerIdentity", controller->metaCast("AirPortDriver") ? "AirPortDriver" : "Unrecognized");
+        auto bytes = reinterpret_cast<const uint8_t *>(controller);
+        service->setProperty("BrcmPowerState", __atomic_load_n(reinterpret_cast<const uint64_t *>(bytes + 6800), __ATOMIC_RELAXED), 64);
+        service->setProperty("BrcmRequestedPowerState", __atomic_load_n(reinterpret_cast<const uint64_t *>(bytes + 6808), __ATOMIC_RELAXED), 64);
+        service->setProperty("BrcmPowerTransition", __atomic_load_n(bytes + 6816, __ATOMIC_RELAXED) != 0);
+        controller->release();
+    }
     service->setProperty("ActiveABI", activeABI ? activeABI->name : "Unsupported");
     service->setProperty("AirPortBackend", !activeABI ? "Unsupported" : activeABI->backend == AirPortBackend::Original ? "Original" : "Tahoe");
     service->setProperty("DriverKitBackend", false);

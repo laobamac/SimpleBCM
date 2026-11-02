@@ -582,35 +582,6 @@
         }
       ]
     },
-    "Skywalk": {
-      "path": ".research/binaries/IOSkywalkFamily-v1.2.0/IOSkywalkFamily.kext/Contents/MacOS/IOSkywalkFamily",
-      "uuid": "035a9ad96cde362f8decb664bc6431ec",
-      "sha256": "0484ecd97d1bdb8759aef72661c196cda4309697eea1945a4a3c4d5e6d7e5e5b",
-      "guards": [
-        {
-          "address": "0x1525e",
-          "symbol": "__ZN26IOSkywalkEthernetInterface13newUserClientEP4taskPvjP12OSDictionaryPP12IOUserClient"
-        }
-      ],
-      "copySites": [
-        {
-          "address": "0xd109",
-          "output": true
-        },
-        {
-          "address": "0x1974d",
-          "output": false
-        },
-        {
-          "address": "0x197b8",
-          "output": true
-        },
-        {
-          "address": "0x198ef",
-          "output": false
-        }
-      ]
-    },
     "AirPortOriginal": {
       "path": ".research/binaries/IO80211FamilyLegacy-v1.0.0/IO80211FamilyLegacy.kext/Contents/PlugIns/AirPortBrcmNIC.kext/Contents/MacOS/AirPortBrcmNIC",
       "uuid": "e4678feb1dc135cc930648021083d04a",

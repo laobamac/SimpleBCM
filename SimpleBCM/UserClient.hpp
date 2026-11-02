@@ -15,8 +15,8 @@
 #include <IOKit/IOUserClient.h>
 #include <IOKit/IOWorkLoop.h>
 
-class IO80211APIUserClient final : public IOUserClient {
-    OSDeclareDefaultStructors(IO80211APIUserClient)
+class BCM80211UserClient final : public IOUserClient {
+    OSDeclareDefaultStructors(BCM80211UserClient)
 public:
     static IOReturn create(IOService *provider, task_t task, void *token,
                            OSDictionary *properties, bcm::InterfaceKind kind,

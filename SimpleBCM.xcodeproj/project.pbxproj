@@ -23,6 +23,8 @@
 		000000000000000000000141 = {isa = PBXBuildFile; fileRef = 00000000000000000000012D; };
 		000000000000000000000142 = {isa = PBXBuildFile; fileRef = 00000000000000000000012E; };
 		000000000000000000000143 = {isa = PBXBuildFile; fileRef = 00000000000000000000012F; };
+		000000000000000000000160 = {isa = PBXBuildFile; fileRef = 000000000000000000000161; };
+		000000000000000000000170 = {isa = PBXBuildFile; fileRef = 000000000000000000000171; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -46,6 +48,12 @@
 		000000000000000000000130 /* Loader.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = Loader.hpp; sourceTree = "<group>"; };
 		000000000000000000000131 /* Patcher.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = Patcher.hpp; sourceTree = "<group>"; };
 		000000000000000000000132 /* Payload.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = Payload.hpp; sourceTree = "<group>"; };
+		000000000000000000000161 = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = NativeSkywalk.cpp; sourceTree = "<group>"; };
+		000000000000000000000162 = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = NativeSkywalk.hpp; sourceTree = "<group>"; };
+		000000000000000000000163 = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = NativeProfile.hpp; sourceTree = "<group>"; };
+		000000000000000000000171 = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = NativeUserClient.cpp; sourceTree = "<group>"; };
+		000000000000000000000172 = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = NativeUserClient.hpp; sourceTree = "<group>"; };
+		000000000000000000000173 = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = HardwareIdentity.hpp; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXGroup section */
@@ -65,6 +73,12 @@
 				000000000000000000000130 /* Loader.hpp */,
 				000000000000000000000131 /* Patcher.hpp */,
 				000000000000000000000132 /* Payload.hpp */,
+				000000000000000000000161,
+				000000000000000000000162,
+				000000000000000000000163,
+				000000000000000000000171,
+				000000000000000000000172,
+				000000000000000000000173,
 				000000000000000000000078 /* Info.plist */,
 			);
 			path = SimpleBCM;
@@ -164,6 +178,8 @@
 				000000000000000000000141,
 				000000000000000000000142,
 				000000000000000000000143,
+				000000000000000000000160,
+				000000000000000000000170,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -261,6 +277,8 @@
 					"-framework",
 					CoreWLAN,
 					"-framework",
+					SystemConfiguration,
+					"-framework",
 					IOKit,
 				);
 				PRODUCT_NAME = bcmprobe;
@@ -285,6 +303,8 @@
 					Foundation,
 					"-framework",
 					CoreWLAN,
+					"-framework",
+					SystemConfiguration,
 					"-framework",
 					IOKit,
 				);

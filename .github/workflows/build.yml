@@ -5,12 +5,11 @@
 #  Created by laobamac on 2026/9/25.
 #  Copyright © 2026 laobamac. All rights reserved.
 #
-name: Build and Publish
+name: Native Build and Publish
 
 on:
   push:
     branches: ['**']
-  pull_request:
   release:
     types: [published]
   workflow_dispatch:
@@ -20,17 +19,18 @@ permissions:
 
 concurrency:
   group: simplebcm-${{ github.event_name == 'push' && 'pre' || github.event_name == 'release' && github.event.release.tag_name || github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'push' || github.event_name == 'pull_request' }}
+  cancel-in-progress: ${{ github.event_name == 'push' }}
 
 jobs:
   build:
     if: github.event_name != 'release' || github.event.release.prerelease == false
-    runs-on: macos-26-intel
+    runs-on: [self-hosted, macOS, X64, simplebcm-native]
     timeout-minutes: 30
     outputs:
       channel: ${{ steps.channel.outputs.value }}
     env:
       PYTHONDONTWRITEBYTECODE: '1'
+      SIMPLEBCM_REFERENCE_ROOT: ${{ vars.SIMPLEBCM_REFERENCE_ROOT }}
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -64,6 +64,10 @@ jobs:
           uname -m
           xcodebuild -version
           xcrun --show-sdk-version
+      - name: Check source metadata
+        run: python3 Tools/check.py
+      - name: Verify all native reference systems
+        run: python3 Tools/system_profiles.py
       - name: Prepare pinned dependencies
         run: python3 Tools/bootstrap.py
       - name: Build and validate Debug

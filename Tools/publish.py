@@ -28,23 +28,28 @@ def prerelease_body(repository, commits):
         subject = commit['commit']['message'].splitlines()[0]
         subject = re.sub(r'([\\`*_{}\[\]<>#|])', r'\\\1', subject)
         changes.append(f'- [`{commit["sha"][:7]}`]({repository_url}/commit/{commit["sha"]}) {subject}')
-    return 'Development build for macOS Sonoma, macOS Sequoia and macOS Tahoe.\n\n' + '\n'.join(changes) + '\n'
+    return ('Universal native Skywalk development build for macOS Sonoma, Sequoia and Tahoe.\n\n'
+            'Keep native IOSkywalkFamily and IO80211Family enabled; remove old Skywalk Block/Exclude rules.\n'
+            f'Installation: [README]({repository_url}/blob/{os.environ["GITHUB_SHA"]}/README.en.md).\n\n' +
+            '\n'.join(changes) + '\n')
 
 
 def release_body():
-    return '''支持 macOS Sonoma 14、macOS Sequoia 15 和 macOS Tahoe 26，通过 OpenCore 注入恢复 Broadcom Wi-Fi 驱动，无需修改系统卷。
+    return '''一个 SimpleBCM.kext 支持 macOS Sonoma、Sequoia 和 Tahoe，通过 OpenCore 注入恢复 Broadcom Wi-Fi，使用系统原生 Skywalk，无需修改系统卷。
 
-- 所需 Apple 驱动已内置于 SimpleBCM，自动管理加载顺序，三个系统使用同一套包。
-- **必须启用 IOSkywalkFamily 的 Block：`Identifier=com.apple.iokit.IOSkywalkFamily`、`Strategy=Exclude`、`Enabled=true`。**
+- 内置 Legacy 和两个 AirPort 载荷，每次启动只加载 Legacy 与当前系统对应的 AirPort；不含旧 Skywalk 驱动。
+- **删除或禁用 IOSkywalkFamily 的 Block/Exclude 规则，保持原生 IOSkywalkFamily 和 IO80211Family 启用。** 禁用独立的旧驱动注入项，使用包内配置片段。
+- 支持 Sonoma 14、Sequoia 15、Tahoe 26 的 x86_64 系统，不限制小版本。
 - 提供 DEBUG 和 RELEASE 包，日常使用请选择 RELEASE 包。AirportBrcmFixup 仍由需要的用户自行加载。
 
 <details>
 <summary>English</summary>
 
-Supports macOS Sonoma 14, macOS Sequoia 15 and macOS Tahoe 26, restoring Broadcom Wi-Fi drivers through OpenCore injection without modifying the system volume.
+One SimpleBCM.kext supports macOS Sonoma, Sequoia and Tahoe with native Skywalk through OpenCore injection, without modifying the system volume.
 
-- The required Apple drivers are embedded in SimpleBCM with automatic load ordering. The same packages serve all three systems.
-- **The IOSkywalkFamily Block is required: `Identifier=com.apple.iokit.IOSkywalkFamily`, `Strategy=Exclude`, `Enabled=true`.**
+- Legacy and two AirPort variants are embedded; each boot loads only Legacy and its selected AirPort backend. Old Skywalk code is not included.
+- **Remove or disable IOSkywalkFamily Block/Exclude rules. Keep native IOSkywalkFamily and IO80211Family enabled.** Disable separately injected old drivers and use the supplied configuration fragment.
+- Supports x86_64 Sonoma 14, Sequoia 15 and Tahoe 26 without restricting minor versions.
 - DEBUG and RELEASE packages are available. Choose RELEASE for everyday use. Supply AirportBrcmFixup separately if needed.
 
 </details>'''

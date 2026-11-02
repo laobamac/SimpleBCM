@@ -9,7 +9,7 @@
 
 # SimpleBCM
 
-![Version](https://img.shields.io/badge/version-1.0.1-2563eb)
+![Version](https://img.shields.io/badge/version-1.2.0-2563eb)
 ![macOS](https://img.shields.io/badge/macOS-Sonoma%2014%20%7C%20Sequoia%2015%20%7C%20Tahoe%2026-111827)
 ![Architecture](https://img.shields.io/badge/arch-x86__64-6b7280)
 ![OpenCore](https://img.shields.io/badge/boot-OpenCore-16a34a)
@@ -18,26 +18,33 @@
 
 </div>
 
+SimpleBCM restores Broadcom Wi-Fi on macOS Sonoma, Sequoia and Tahoe through OpenCore injection. One kext uses each system’s native IOSkywalkFamily without modifying the system volume.
+
 ## Installation
 
 1. Place `SimpleBCM.kext` in `EFI/OC/Kexts`, replacing the previous version.
 2. Disable the separate Add entries for IOSkywalkFamily, IO80211FamilyLegacy and AirPortBrcmNIC.
 3. Merge the packaged `config.fragment.plist`, check with `ocvalidate`, then reboot.
 
-**Required `Kernel → Block` entry: `Identifier=com.apple.iokit.IOSkywalkFamily`, `Strategy=Exclude`, `Enabled=true`.**
+**Remove or disable existing `Kernel → Block` rules for `com.apple.iokit.IOSkywalkFamily`. Keep native IOSkywalkFamily and IO80211Family enabled.**
+
+Supports macOS Sonoma 14, Sequoia 15 and Tahoe 26 without restricting minor versions. Use `MinKernel=23.0.0` and `MaxKernel=25.99.99`.
 
 If AirportBrcmFixup is needed, add Lilu, AirportBrcmFixup and AirPortBrcmNIC_Injector using `Extra/config.AirportBrcmFixup.fragment.plist`.
 
 ## Debugging
 
-Use DEBUG with the `-simplebcmdbg` boot argument. Run from the extracted package directory:
+Use the DEBUG package. Run from the extracted package directory:
 
 ```sh
 ./Extra/bcmprobe
+./Extra/bcmprobe --scan
 python3 Extra/collect.py
 ```
 
 ## Building
+
+Requires full Xcode, an Intel Mac, and the three reference kernel collections. See [Build and CI](Docs/Build.md) for setup.
 
 ```sh
 python3 Tools/bootstrap.py
@@ -50,4 +57,4 @@ python3 Tools/build.py package --configuration Release
 
 Xcode project: `SimpleBCM.xcodeproj`. Output: `dist`.
 
-[Third-party licenses](NOTICE.md)
+[Implementation](Docs/Native-Universal.md) · [Third-party licenses](NOTICE.md)

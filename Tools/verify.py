@@ -24,6 +24,7 @@ HOST_SOURCE = r'''
 //
 
 #include "WirelessABI.hpp"
+#include "HardwareIdentity.hpp"
 #include <CoreFoundation/CoreFoundation.h>
 #include <IOKit/IOKitLib.h>
 #include <mach-o/loader.h>
@@ -839,7 +840,33 @@ static void profileBoundaries() {
     }
 }
 
+static void hardwareIdentityVectors() {
+    const char raw[] = "vendorid: 0x14e4\ndeviceid: 0x4353\nradiorev: 0xb2056000\n"
+        "chipnum: 0xa8d8\nchiprev: 0x1\nboardid: 0xe9\nboardvendor: 0x106b\n";
+    bcm::HardwareIdentity identity {};
+    assert(bcm::decodeHardwareIdentity(raw, sizeof(raw) - 1, identity));
+    assert(identity.vendor == 0x14e4 && identity.device == 0x4353 && identity.chip == 43224);
+    assert(identity.board == 0xe9 && identity.boardVendor == 0x106b);
+    uint32_t value = 0x12345678;
+    const char overflow[] = "vendorid: 0x1000014e4";
+    assert(!bcm::hardwareValue(overflow, sizeof(overflow) - 1, "vendorid: 0x", value));
+    assert(value == 0x12345678);
+    const char invalid[] = "vendorid: 0x14g4";
+    assert(!bcm::hardwareValue(invalid, sizeof(invalid) - 1, "vendorid: 0x", value));
+    assert(!bcm::decodeHardwareIdentity(nullptr, 1, identity));
+    assert(!bcm::decodeHardwareIdentity(raw, 2049, identity));
+    const char prefix[] = "xvendorid: 0x14e4";
+    assert(!bcm::hardwareValue(prefix, sizeof(prefix) - 1, "vendorid: 0x", value));
+    for (size_t length = 0; length < sizeof(raw) - 7; ++length) {
+        assert(!bcm::decodeHardwareIdentity(raw, length, identity));
+    }
+    char description[96];
+    snprintf(description, sizeof(description), "AirPort Extreme (0x%X, 0x%X)", identity.vendor, identity.board);
+    assert(!strcmp(description, "AirPort Extreme (0x14E4, 0xE9)"));
+}
+
 int main() {
+    hardwareIdentityVectors();
     profileBoundaries();
     boundaries<23>();
     boundaries<24>();
