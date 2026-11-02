@@ -16,6 +16,7 @@ import xml.etree.ElementTree as ET
 from bootstrap import ROOT
 from build import VERSION, fragment, package_name
 from system_profiles import SYSTEMS
+from native_references import DIRECTORY, load_reference
 
 
 def main():
@@ -23,6 +24,8 @@ def main():
         ast.parse(path.read_text(), filename=str(path))
     for path in (ROOT / 'Docs').glob('*.json'):
         json.loads(path.read_text())
+    for system in SYSTEMS:
+        load_reference(DIRECTORY / (system + '.json'))
     assert {p.name for p in ROOT.glob('*.xcodeproj')} == {'SimpleBCM.xcodeproj'}
     project = ROOT / 'SimpleBCM.xcodeproj'
     for path in project.rglob('*.xcscheme'):

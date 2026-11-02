@@ -44,7 +44,7 @@ python3 Extra/collect.py
 
 ## Building
 
-Requires full Xcode, an Intel Mac, and the three reference kernel collections. See [Build and CI](Docs/Build.md) for setup.
+Requires full Xcode and an Intel Mac. ABI reference data is included in the source; CI uses GitHub-hosted `macos-26-intel`. See [Build and CI](Docs/Build.md).
 
 ```sh
 python3 Tools/bootstrap.py

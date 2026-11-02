@@ -25,7 +25,8 @@ from embed import ALIASES, LABELS, OUTPUT, VERSION, parse
 from kernel_collection import KernelCollection
 from macho import Image
 from profiles import IMAGES
-from system_profiles import SYSTEMS, system_volumes, validate_reference_systems
+from system_profiles import SYSTEMS, validate_reference_systems
+from native_references import reference_paths
 
 
 CONFIGURATIONS = ('Debug', 'Release')
@@ -182,7 +183,7 @@ def digest(path):
 
 def fingerprint():
     files = [ROOT / name for name in ('README.md', 'README.en.md', 'NOTICE.md')]
-    for folder in ['SimpleBCM', 'SimpleBCM.xcodeproj', 'Config', 'Tools', 'Probe', 'Docs', '.github']:
+    for folder in ['SimpleBCM', 'SimpleBCM.xcodeproj', 'Config', 'Tools', 'Probe', 'Docs', 'Resources', '.github']:
         files.extend(p for p in (ROOT / folder).rglob('*') if p.is_file() and '__pycache__' not in p.parts and 'xcuserdata' not in p.parts and p.name != '.DS_Store')
     hashes = {str(p.relative_to(ROOT)): digest(p) for p in sorted(files)}
     return hashlib.sha256(json.dumps(hashes, sort_keys=True).encode()).hexdigest()
@@ -264,7 +265,7 @@ def check_reference(folder, addresses, compatibility, far, labels):
     return checked
 
 
-def verify(configuration, volumes):
+def verify(configuration, references):
     validate_payloads()
     source_fingerprint = fingerprint()
     manifest = json.loads((OUTPUT / 'manifest.json').read_text())
@@ -287,9 +288,9 @@ def verify(configuration, volumes):
     assert '__ZN6OSKext8copyUUIDEv' not in undefined
     targets = []
     addresses = {}
-    reference_volumes = {}
-    for volume in volumes:
-        c = KernelCollection(volume / 'System/Library/KernelCollections/BootKernelExtensions.kc')
+    verified_references = {}
+    for reference in references:
+        c = KernelCollection(reference)
         kernel = int(c.version().split('.')[0])
         profiles = [p for p in manifest['systemProfiles'] if p['kernel'] == kernel]
         assert len(profiles) == 1, ('Unsupported reference kernel', c.version())
@@ -298,20 +299,21 @@ def verify(configuration, volumes):
         assert c.images['com.apple.iokit.IO80211Family'].uuid == profile['wirelessUUID'].replace('-', '').lower()
         available = native_addresses(c, info['OSBundleLibraries'])
         missing = sorted(undefined - available.keys())
-        assert not missing, (str(volume), missing)
+        assert not missing, (str(reference), missing)
         for parent, offset, method in manifest['nativeRuntimeGuards'][profile['system']]['vtables']:
             assert c.pointer(available[parent] + offset) == available[method]
         for parent, offset, method in manifest['nativeVtableGuards']:
             observed = c.pointer(available[parent] + offset)
-            assert observed == available[method], (str(volume), parent, offset, method)
+            assert observed == available[method], (str(reference), parent, offset, method)
         targets.append({'system': profile['system'], 'build': profile['build'],
-                        'volume': str(volume), 'kernel': c.version(), 'uuid': c.root.uuid,
+                        'reference': str(reference), 'referenceKind': 'snapshot' if reference.suffix == '.json' else 'kernel-collection',
+                        'kernel': c.version(), 'uuid': c.root.uuid,
                         'imports': len(undefined), 'unmatchedImports': [],
                         'nativeVtableGuards': len(manifest['nativeVtableGuards']),
                         'runtimeVtableGuards': len(manifest['nativeRuntimeGuards'][profile['system']]['vtables']),
                         'runtimeClassGuards': len(manifest['nativeRuntimeGuards'][profile['system']]['classes'])})
         addresses[profile['system']] = available
-        reference_volumes[profile['system']] = volume
+        verified_references[profile['system']] = reference
         c.close()
     assert addresses
     adapter = manifest['nativeAdapter']
@@ -334,13 +336,17 @@ def verify(configuration, volumes):
         for system, current in addresses.items():
             profile = SYSTEMS[system]
             from native_abi import Mach
-            reference = Mach(reference_volumes[system] / 'System/Library/KernelCollections/BootKernelExtensions.kc',
-                             'com.apple.iokit.IOSkywalkFamily')
-            section = next(s for s in reference.sects if s[0] == '__text')
-            start, length = section[2:4]
+            reference = Mach(verified_references[system], 'com.apple.iokit.IOSkywalkFamily')
             symbol = next(p['ethernetLinkSymbol'] for p in manifest['systemProfiles'] if p['system'] == system)
+            if verified_references[system].suffix == '.json':
+                start, code = reference.funcbytes(symbol)
+            else:
+                section = next(s for s in reference.sects if s[0] == '__text')
+                start, length = section[2:4]
+                code = reference.read(start, length)
+            length = len(code)
             (temp / 'native-link.bin').write_bytes(struct.pack('<3Q', start, reference.names[symbol][4], length) +
-                                                 reference.read(start, length))
+                                                 code)
             reference.close()
             compatibility = {name: (current[target] if target in current else 0xffffff800f000000 + image.symbols[target])
                              for name, target in zip(adapter['compatibilityImports'], adapter['compatibilityTargets'])}
@@ -457,10 +463,9 @@ def main():
     if args.action in ['build', 'analyze']:
         build(args.configuration, args.action == 'analyze')
     if args.action in ['verify', 'build']:
-        volumes = system_volumes()
-        if not args.target_volume and set(volumes) != set(SYSTEMS):
-            raise RuntimeError('The universal build requires all three reference systems')
-        verify(args.configuration, args.target_volume or list(volumes.values()))
+        references = ([volume / 'System/Library/KernelCollections/BootKernelExtensions.kc' for volume in args.target_volume]
+                      if args.target_volume else list(reference_paths().values()))
+        verify(args.configuration, references)
     if args.action == 'package':
         package(args.configuration, args.channel)
 

@@ -67,6 +67,12 @@ class KernelImage:
 
 
 class KernelCollection:
+    def __new__(cls, path):
+        if Path(path).suffix == '.json':
+            from native_references import ReferenceCollection
+            return ReferenceCollection(path)
+        return super().__new__(cls)
+
     def __init__(self, path):
         self.path = Path(path)
         with self.path.open('rb') as source:

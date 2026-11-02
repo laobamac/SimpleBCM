@@ -55,20 +55,14 @@ def system_volume(name):
 
 def validate_reference_systems():
     from kernel_collection import KernelCollection
+    from native_references import reference_paths
 
     if platform.system() != 'Darwin' or platform.machine() != 'x86_64':
-        raise RuntimeError('Full validation requires an Intel Mac running the reference Tahoe system')
-    host = plistlib.loads(Path('/System/Library/CoreServices/SystemVersion.plist').read_bytes())
-    if host.get('ProductBuildVersion') != SYSTEMS['Tahoe']['build']:
-        raise RuntimeError('Native userspace validation requires Tahoe ' + SYSTEMS['Tahoe']['build'])
-    volumes = system_volumes()
-    missing = [name + ' ' + profile['build'] for name, profile in SYSTEMS.items() if name not in volumes]
-    if missing:
-        raise RuntimeError('Missing reference systems: ' + ', '.join(missing) +
-                           '. See Docs/Build.md or set SIMPLEBCM_REFERENCE_ROOT.')
+        raise RuntimeError('Build validation requires an Intel Mac')
+    references = reference_paths()
     report = {}
     for name, profile in SYSTEMS.items():
-        path = volumes[name] / 'System/Library/KernelCollections/BootKernelExtensions.kc'
+        path = references[name]
         collection = KernelCollection(path)
         try:
             if int(collection.version().split('.')[0]) != profile['kernel']:
@@ -78,7 +72,7 @@ def validate_reference_systems():
                 image = collection.images.get(identifier)
                 if image is None or image.uuid != profile[field].replace('-', '').lower():
                     raise RuntimeError(f'{name}: {identifier} UUID differs from the reference profile')
-            report[name] = {'volume': str(volumes[name]), 'build': profile['build'],
+            report[name] = {'reference': str(path), 'build': profile['build'],
                             'kernel': collection.version(), 'skywalkUUID': profile['skywalk'],
                             'wirelessUUID': profile['wireless']}
         finally:

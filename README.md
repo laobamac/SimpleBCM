@@ -44,7 +44,7 @@ python3 Extra/collect.py
 
 ## 构建
 
-需要完整 Xcode、Intel Mac 和三个系统的参考内核集合。环境配置见[构建与 CI](Docs/Build.md)。
+需要完整 Xcode 和 Intel Mac。ABI 参考数据随源码提供，CI 使用 GitHub 托管的 `macos-26-intel`。详见[构建与 CI](Docs/Build.md)。
 
 ```sh
 python3 Tools/bootstrap.py

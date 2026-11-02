@@ -19,7 +19,8 @@ import uuid
 from pathlib import Path
 
 from profiles import IMAGES
-from system_profiles import SYSTEMS, system_volume
+from system_profiles import SYSTEMS
+from native_references import ReferenceImage, reference_paths
 
 
 EXPECTED_SOURCES = {
@@ -32,6 +33,11 @@ PATHS = {key: IMAGES[label] for key, label in (
     ('OldSky', 'Skywalk'), ('Legacy', 'Legacy'), ('BrcmTahoe', 'AirPort'), ('BrcmOriginal', 'AirPortOriginal'))}
 
 class Mach:
+
+    def __new__(cls, path, entry=None):
+        if Path(path).suffix == '.json':
+            return ReferenceImage(path, entry)
+        return super().__new__(cls)
 
     def __init__(self, path, entry=None):
         self.path = str(path)
@@ -153,7 +159,7 @@ class Mach:
         return (a, self.read(a, e - a))
 
 def sky(ver):
-    return Mach(system_volume(ver) / 'System/Library/KernelCollections/BootKernelExtensions.kc', 'com.apple.iokit.IOSkywalkFamily')
+    return Mach(reference_paths()[ver], 'com.apple.iokit.IOSkywalkFamily')
 
 def dem(names):
     s = list(names)
@@ -207,6 +213,8 @@ def method_key(name):
     return METHOD_KEYS[name]
 
 def table(image, cls, kernel=None):
+    if isinstance(image, ReferenceImage):
+        return list(image.tables[cls])
     sym = image.names[vtable_name(cls)]
     start = sym[4]
     end = min((s[4] for s in image.syms if s[2] == sym[2] and s[4] > start))

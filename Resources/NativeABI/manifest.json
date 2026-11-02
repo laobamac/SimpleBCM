@@ -1,0 +1,13 @@
+{
+  "file": "manifest.json",
+  "project": "SimpleBCM",
+  "createdBy": "laobamac",
+  "createdOn": "2026/11/3",
+  "copyright": "Copyright \u00a9 2026 laobamac. All rights reserved.",
+  "schemaVersion": 1,
+  "files": {
+    "Sonoma.json": "7a8fe4b7b36ff67485eef3352cd13f6e2140f77ca65d48e8519543ac6db60877",
+    "Sequoia.json": "0e2311e735f1029a7f2957c8fcaa939561dc2ac14c58740be7ad552c4ba76ee1",
+    "Tahoe.json": "611b50f109954bb7eda873c40dccf7f6d3ff57a994a156ede9550d9ac9ce82cd"
+  }
+}

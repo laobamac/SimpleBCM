@@ -18,7 +18,7 @@ SimpleBCM 在启动时按 Darwin 主版本选择配置，不以系统小版本�
 | Sequoia 15.8 | 24H23 | 70DFAA8E-E369-3417-B6FD-B19FB6D5D49B | 13D3592A-A6BE-35E7-984C-0ACD90A76356 |
 | Tahoe 26.7.2 | 25G332 | A6EDB8DB-175B-3A49-8919-5769FCDB6BED | 4C2B4969-2B92-3646-9512-C1769BE0F9A4 |
 
-以上版本和 UUID 用于固定构建输入，不是运行时白名单。配置源为 `Tools/system_profiles.py`，生成器为 `Tools/native_abi.py`、`Tools/native_payload.py` 和 `Tools/embed.py`。运行时通过元类与符号地址核对 15 个原生类和接口、包池、用户客户端的虚表布局。
+以上版本和 UUID 用于固定构建参考，不是运行时白名单。`Resources/NativeABI` 保存从这些系统提取的符号、虚表及必要代码片段，构建时校验 SHA-256 后读取。配置源为 `Tools/system_profiles.py`，生成器为 `Tools/native_abi.py`、`Tools/native_payload.py` 和 `Tools/embed.py`。运行时通过元类与符号地址核对 15 个原生类和接口、包池、用户客户端的虚表布局。
 
 ## 对象与调用转接
 
