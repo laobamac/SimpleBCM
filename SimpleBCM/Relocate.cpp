@@ -18,6 +18,42 @@ uint64_t payloadChecksum(const uint8_t *bytes, size_t length) {
     return value;
 }
 
+bool restorePayload(LinkedImage &image) {
+    if (!image.payload || !image.memory || !image.editable || image.registered)
+        return false;
+    const auto &p = *image.payload;
+    if (!p.bytes || !p.size || p.size > p.bytesSize || p.size > p.mappedSize ||
+        p.stubOffset < p.size || p.stubOffset > p.mappedSize || p.stubSize > p.mappedSize - p.stubOffset ||
+        image.address > UINTPTR_MAX - p.mappedSize || (p.deltaSize && !p.delta))
+        return false;
+    uint32_t position = 0, end = 0;
+    while (position < p.deltaSize) {
+        if (p.deltaSize - position < 8)
+            return false;
+        uint32_t offset, length;
+        memcpy(&offset, p.delta + position, 4);
+        memcpy(&length, p.delta + position + 4, 4);
+        position += 8;
+        if (!length || offset < end || offset > p.size || length > p.size - offset || length > p.deltaSize - position)
+            return false;
+        end = offset + length;
+        position += length;
+    }
+    memcpy(image.memory, p.bytes, p.size);
+    memset(image.memory + p.size, 0, p.mappedSize - p.size);
+    position = 0;
+    while (position < p.deltaSize) {
+        uint32_t offset, length;
+        memcpy(&offset, p.delta + position, 4);
+        memcpy(&length, p.delta + position + 4, 4);
+        position += 8;
+        memcpy(image.memory + offset, p.delta + position, length);
+        position += length;
+    }
+    image.stubUsed = 0;
+    return true;
+}
+
 uintptr_t findSymbol(const LinkedImage &image, const char *name) {
     size_t begin = 0, end = image.payload->symbolCount;
     while (begin < end) {

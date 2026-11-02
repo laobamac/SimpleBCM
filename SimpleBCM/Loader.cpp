@@ -190,8 +190,8 @@ bool preparePayloads() {
         image.address = address;
         image.memory = reinterpret_cast<uint8_t *>(address);
         image.editable = true;
-        bzero(image.memory, image.payload->mappedSize);
-        memcpy(image.memory, image.payload->bytes, image.payload->size);
+        if (!restorePayload(image))
+            return fail("PayloadRestorationFailed", image.payload->identifier);
     }
     status = "Linking";
     for (auto index : selected) {

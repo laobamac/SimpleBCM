@@ -48,4 +48,6 @@ Legacy 与原生 IO80211Family 的冲突元类在载荷 CString 中重命名，�
 
 原生 IOSkywalkNetworkBSDClient 的电源父节点通过 `joinPMtree` 接到无线控制器的实际 IOPCIDevice provider；网络 IOService 的 provider 关系保持不变。接口上下文持有 PCI provider，停止或启动失败时释放。AirPort 原始电源表不作改写。
 
-载荷原件由 `Tools/bootstrap.py` 固定提交与 SHA-256。生成阶段只改写构建目录内的映射副本，运行时修改限于自有载荷和实例虚表。`Tools/build.py` 检查原生导出、继承虚表、重定位、转发调用约定和控制面编解码；完整构建环境见 [Build.md](Build.md)。
+载荷原件由 `Tools/bootstrap.py` 固定提交与 SHA-256。两种 AirPort 共用一份基础载荷和相同的重定位、符号及入口表，Tahoe 的差异以偏移、长度和替换字节保存。启动时仅在选中载荷的独立映射中恢复字节，差分边界检查通过后才写入，完整载荷校验通过后才重定位；基础载荷保持只读，不增加收发阶段的处理。
+
+生成阶段只改写构建目录内的映射副本，运行时修改限于自有载荷和实例虚表。`Tools/build.py` 检查载荷恢复、原生导出、继承虚表、重定位、转发调用约定和控制面编解码；完整构建环境见 [Build.md](Build.md)。

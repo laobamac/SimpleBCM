@@ -43,6 +43,9 @@ struct Payload {
     const char *identifier;
     const char *sha256;
     const uint8_t *bytes;
+    uint32_t bytesSize;
+    const uint8_t *delta;
+    uint32_t deltaSize;
     uint32_t size;
     uint32_t mappedSize;
     uint32_t stubOffset;
@@ -76,6 +79,7 @@ extern const char *const nativeImportNames[];
 extern const NativeVtableGuard nativeVtableGuards[];
 extern const uint32_t nativeVtableGuardCount;
 
+bool restorePayload(LinkedImage &image);
 bool relocateImage(LinkedImage &image, const LinkedImage *images, size_t imageCount,
                    const uintptr_t *imports, size_t importCount,
                    const uintptr_t *compatibility, size_t compatibilityCount);

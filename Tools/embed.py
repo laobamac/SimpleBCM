@@ -49,6 +49,30 @@ def checksum(data):
     return value
 
 
+def payload_delta(base, target):
+    if not target or len(target) > len(base):
+        raise ValueError('Payload delta requires a base at least as large as its target')
+    ranges = []
+    for offset, (before, after) in enumerate(zip(base, target)):
+        if before == after:
+            continue
+        if ranges and offset - ranges[-1][1] <= 8:
+            ranges[-1][1] = offset + 1
+        else:
+            ranges.append([offset, offset + 1])
+    encoded = b''.join(struct.pack('<II', start, end - start) + target[start:end] for start, end in ranges)
+    restored = bytearray(base[:len(target)])
+    position = 0
+    while position < len(encoded):
+        offset, length = struct.unpack_from('<II', encoded, position)
+        position += 8
+        restored[offset:offset + length] = encoded[position:position + length]
+        position += length
+    if restored != target:
+        raise ValueError('Payload delta does not reconstruct the target')
+    return encoded, len(ranges)
+
+
 def parse(image):
     commands = []
     position = 32
@@ -154,6 +178,19 @@ def generate():
     cpp = [header('Payloads.cpp'), '#include "Payload.hpp"', '#include "NativeProfile.hpp"', 'namespace bcm {']
     assembly = [header('Payloads.S'), '.section __TEXT,__const', '.p2align 3']
     descriptors = []
+    expanded_images = []
+    tables = {}
+
+    def emit_table(kind, name, rows):
+        rows = tuple(rows)
+        key = (kind, rows)
+        if key not in tables:
+            cpp.append(f'static const {kind} {name}[] = {{')
+            cpp.extend(row + ',' for row in rows)
+            cpp.append('};')
+            tables[key] = name
+        return tables[key]
+
     manifest = {'version': VERSION, 'nativeImports': native, 'payloads': [], 'driverLoading': 'embedded',
                 'hardwareValidation': 'not-run-by-build', 'skywalkBackend': 'native', 'nativeAdapter': plan.manifest(),
                 'systemProfiles': [candidate.manifest() for candidate in plans]}
@@ -261,20 +298,24 @@ def generate():
         routes = route_prefixes(image, label)
         blob = OUTPUT / (label + '.bin')
         blob.write_bytes(expanded)
-        assembly += [f'.globl _bcmPayload{index}', f'_bcmPayload{index}:', f'.incbin "{blob}"', '.p2align 3']
+        expanded_images.append(bytes(expanded))
+        base_index = 1 if label == 'AirPort' else index
+        delta, delta_count = payload_delta(expanded_images[base_index], expanded) if label == 'AirPort' else (b'', 0)
+        stored = delta if label == 'AirPort' else expanded
+        stored_blob = OUTPUT / (label + '.delta') if label == 'AirPort' else blob
+        if label == 'AirPort':
+            stored_blob.write_bytes(stored)
+        assembly += [f'.globl _bcmPayload{index}', f'_bcmPayload{index}:', f'.incbin "{stored_blob}"', '.p2align 3']
         cpp.append(f'extern "C" const uint8_t bcmPayload{index}[];')
-        cpp.append(f'static const Relocation relocs{index}[] = {{')
-        cpp.extend(f'{{{a}, {t}, {v}LL, {p}, {w}, {{}}}},' for a, t, v, p, w in relocations)
-        cpp.append('};')
-        cpp.append(f'static const uint32_t values{index}[] = {{{", ".join(map(str, symbol_values))}}};')
+        relocation_table = emit_table('Relocation', f'relocs{index}',
+            (f'{{{a}, {t}, {v}LL, {p}, {w}, {{}}}}' for a, t, v, p, w in relocations))
+        value_table = emit_table('uint32_t', f'values{index}', map(str, symbol_values))
         wanted = set(SYMBOLS[label]) | {'_kmod_info'}
         if label != 'Legacy':
             wanted.add(HARDWARE_VERSION_SYMBOL)
         named = sorted((n, image.symbols[n]) for n in wanted)
-        cpp.append(f'static const Symbol symbols{index}[] = {{')
-        cpp.extend(f'{{{json.dumps(n)}, {v}}},' for n, v in named)
-        cpp.append('};')
-        cpp.append(f'static const RoutePrefix routes{index}[] = {{{", ".join("{" + str(a) + ", " + str(n) + "}" for a, n in routes) if routes else "{0, 0}"}}};')
+        symbol_table = emit_table('Symbol', f'symbols{index}', (f'{{{json.dumps(n)}, {v}}}' for n, v in named))
+        route_table = emit_table('RoutePrefix', f'routes{index}', (f'{{{a}, {n}}}' for a, n in routes or [(0, 0)]))
         info['OSBundleLibraries']['cn.laobamac.SimpleBCM'] = VERSION
         info['OSBundleRequired'] = 'Root'
         if label == 'Legacy':
@@ -283,11 +324,20 @@ def generate():
         literal = json.dumps(plist).replace('?', '\\?')
         cpp.append(f'static const char plist{index}[] = {literal};')
         sha = hashlib.sha256(image.path.read_bytes()).hexdigest()
-        descriptors.append(f'{{{json.dumps(info["CFBundleIdentifier"])}, "{sha}", bcmPayload{index}, {size}, {size + stub_size}, {size}, {stub_size}, {kmod}, plist{index}, relocs{index}, {len(relocations)}, values{index}, {len(symbol_values)}, symbols{index}, {len(named)}, routes{index}, {len(routes)}, {checksum(expanded)}ULL}}')
+        delta_pointer = f'bcmPayload{index}' if delta else 'nullptr'
+        descriptors.append(f'{{{json.dumps(info["CFBundleIdentifier"])}, "{sha}", bcmPayload{base_index}, {len(expanded_images[base_index])}, {delta_pointer}, {len(delta)}, {size}, {size + stub_size}, {size}, {stub_size}, {kmod}, plist{index}, {relocation_table}, {len(relocations)}, {value_table}, {len(symbol_values)}, {symbol_table}, {len(named)}, {route_table}, {len(routes)}, {checksum(expanded)}ULL}}')
         manifest['payloads'].append({'label': label, 'identifier': info['CFBundleIdentifier'], 'sourceSHA256': sha,
                                     'expandedSHA256': hashlib.sha256(expanded).hexdigest(), 'size': size,
                                     'mappedSize': size + stub_size, 'relocations': len(relocations), 'routes': routes,
-                                    'kmodOffset': kmod, 'namespacedClassStrings': renamed, 'powerDomainPatches': []})
+                                    'kmodOffset': kmod, 'namespacedClassStrings': renamed, 'powerDomainPatches': [],
+                                    'storage': {'kind': 'delta' if label == 'AirPort' else 'full', 'base': LABELS[base_index],
+                                                'file': stored_blob.name, 'storedSize': len(stored), 'deltaRecords': delta_count,
+                                                'storedSHA256': hashlib.sha256(stored).hexdigest(),
+                                                'tables': [relocation_table, value_table, symbol_table, route_table]}})
+    expanded_size = sum(len(data) for data in expanded_images)
+    stored_size = sum(p['storage']['storedSize'] for p in manifest['payloads'])
+    manifest['payloadStorage'] = {'format': 'shared-base-delta-v1', 'expandedBytes': expanded_size,
+                                  'storedBytes': stored_size, 'savedBytes': expanded_size - stored_size}
     cpp += ['const Payload payloads[3] = {', ',\n'.join(descriptors), '};',
             f'const uint32_t nativeImportCount = {len(native)};', 'const char *const nativeImportNames[] = {',
             ',\n'.join(json.dumps(n) for n in native), '};',

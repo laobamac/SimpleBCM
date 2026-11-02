@@ -61,8 +61,81 @@ HOST = r'''
 #include <string.h>
 #include <vector>
 
+static unsigned restorationBoundaries() {
+    const uint8_t base[] = {0, 1, 2, 3, 4, 5, 6, 7};
+    const uint8_t delta[] = {0, 0, 0, 0, 2, 0, 0, 0, 9, 8, 7, 0, 0, 0, 1, 0, 0, 0, 0xaa};
+    const uint8_t expected[] = {9, 8, 2, 3, 4, 5, 6, 0xaa};
+    uint8_t arena[32];
+    bcm::Payload payload {};
+    payload.bytes = base;
+    payload.bytesSize = sizeof(base);
+    payload.delta = delta;
+    payload.deltaSize = sizeof(delta);
+    payload.size = sizeof(base);
+    payload.mappedSize = 16;
+    payload.stubOffset = sizeof(base);
+    payload.stubSize = 8;
+    payload.checksum = bcm::payloadChecksum(expected, sizeof(expected));
+    bcm::LinkedImage image {&payload, arena + 8, 0x1000, 0, false, true};
+    memset(arena, 0x5a, sizeof(arena));
+    assert(bcm::restorePayload(image));
+    assert(!memcmp(image.memory, expected, sizeof(expected)));
+    for (size_t i = 0; i < 8; ++i)
+        assert(arena[i] == 0x5a && image.memory[8 + i] == 0 && arena[24 + i] == 0x5a);
+    assert(bcm::relocateImage(image, nullptr, 0, nullptr, 0, nullptr, 0));
+    const auto original = payload;
+    unsigned rejected = 0;
+    auto reject = [&]() {
+        memset(arena, 0x5a, sizeof(arena));
+        assert(!bcm::restorePayload(image));
+        for (auto byte : arena)
+            assert(byte == 0x5a);
+        payload = original;
+        image = {&payload, arena + 8, 0x1000, 0, false, true};
+        ++rejected;
+    };
+    payload.bytes = nullptr; reject();
+    payload.bytesSize = 7; reject();
+    payload.size = 0; reject();
+    payload.mappedSize = 7; reject();
+    payload.stubOffset = 7; reject();
+    payload.stubSize = 9; reject();
+    payload.delta = nullptr; reject();
+    payload.deltaSize = 7; reject();
+    payload.deltaSize = sizeof(delta) - 1; reject();
+    image.payload = nullptr; reject();
+    image.memory = nullptr; reject();
+    image.editable = false; reject();
+    image.registered = true; reject();
+    image.address = UINTPTR_MAX - 7; reject();
+    uint8_t bad[sizeof(delta)];
+    for (auto offset : {uint32_t(8), UINT32_MAX}) {
+        memcpy(bad, delta, sizeof(bad));
+        memcpy(bad, &offset, 4);
+        payload.delta = bad;
+        reject();
+    }
+    for (auto length : {uint32_t(0), UINT32_MAX}) {
+        memcpy(bad, delta, sizeof(bad));
+        memcpy(bad + 4, &length, 4);
+        payload.delta = bad;
+        reject();
+    }
+    memcpy(bad, delta, sizeof(bad));
+    bad[10] = 1;
+    payload.delta = bad;
+    reject();
+    memcpy(bad, delta, sizeof(bad));
+    bad[8] ^= 1;
+    payload.delta = bad;
+    assert(bcm::restorePayload(image));
+    assert(!bcm::relocateImage(image, nullptr, 0, nullptr, 0, nullptr, 0));
+    return rejected + 2;
+}
+
 int main(int argc, char **argv) {
     assert(argc == 6);
+    const auto restorationChecks = restorationBoundaries();
     auto profile = bcm::nativeSystemForKernel(static_cast<uint32_t>(atoi(argv[4])));
     assert(profile && !bcm::nativeSystemForKernel(22) && !bcm::nativeSystemForKernel(26));
     std::vector<uintptr_t> imports(bcm::nativeImportCount);
@@ -118,6 +191,11 @@ int main(int argc, char **argv) {
         ++linkChecks;
     }
     const bool far = atoi(argv[3]) != 0;
+    assert(bcm::payloads[1].bytes == bcm::payloads[2].bytes);
+    assert(bcm::payloads[1].relocations == bcm::payloads[2].relocations);
+    assert(bcm::payloads[1].symbolValues == bcm::payloads[2].symbolValues);
+    assert(bcm::payloads[1].symbols == bcm::payloads[2].symbols);
+    assert(bcm::payloads[1].routes == bcm::payloads[2].routes);
     bcm::LinkedImage images[2] {};
     for (unsigned i = 0; i < 2; ++i) {
         auto &p = bcm::payloads[i ? profile->airPortPayloadIndex : 0];
@@ -125,7 +203,13 @@ int main(int argc, char **argv) {
                      (far ? 0xffffff9000000000ULL : 0xffffff8010000000ULL) + i * 0x2000000ULL,
                      0, false, true};
         assert(images[i].memory);
-        memcpy(images[i].memory, p.bytes, p.size);
+        assert(bcm::restorePayload(images[i]));
+        assert(bcm::payloadChecksum(images[i].memory, p.size) == p.checksum);
+        char path[4096];
+        snprintf(path, sizeof(path), "%s/%u.restored.bin", argv[2], i);
+        f = fopen(path, "wb");
+        assert(f && fwrite(images[i].memory, 1, p.size, f) == p.size);
+        fclose(f);
     }
     unsigned long total = 0;
     for (unsigned i = 0; i < 2; ++i) {
@@ -144,7 +228,7 @@ int main(int argc, char **argv) {
     auto reset = [&]() {
         altered = original;
         image.stubUsed = 0;
-        memcpy(image.memory, original.bytes, original.size);
+        assert(bcm::restorePayload(image));
     };
     reset();
     image.memory[0] ^= 1;
@@ -172,7 +256,7 @@ int main(int argc, char **argv) {
     assert(!bcm::relocateImage(image, images, 2, imports.data(), imports.size(), compatibility.data(), compatibility.size()));
     for (auto &entry : images)
         free(entry.memory);
-    printf("{\"relocations\":%lu,\"negativeCases\":6,\"nativeLinkChecks\":%u,\"farBranches\":%s}\n", total, linkChecks, far ? "true" : "false");
+    printf("{\"relocations\":%lu,\"negativeCases\":6,\"restorationChecks\":%u,\"nativeLinkChecks\":%u,\"farBranches\":%s}\n", total, restorationChecks, linkChecks, far ? "true" : "false");
 }
 '''
 
@@ -225,6 +309,7 @@ def check_reference(folder, addresses, compatibility, far, labels):
     bases = [(0xffffff9000000000 if far else 0xffffff8010000000) + i * 0x2000000 for i in range(len(labels))]
     checked = 0
     for i, image in enumerate(images):
+        assert (folder / f'{i}.restored.bin').read_bytes() == (OUTPUT / (labels[i] + '.bin')).read_bytes()
         actual = (folder / f'{i}.bin').read_bytes()
         commands, symbols = parse(image)
         ds = next(data for cmd, data in commands if cmd == 11)
@@ -286,6 +371,14 @@ def verify(configuration, references):
     undefined = set(subprocess.check_output(['nm', '-u', '-j', str(binary)], text=True).splitlines())
     assert not any('Lilu' in n or n in ['_lilu', '_lilu_os_log'] for n in undefined)
     assert '__ZN6OSKext8copyUUIDEv' not in undefined
+    for payload in manifest['payloads']:
+        storage = payload['storage']
+        stored = (OUTPUT / storage['file']).read_bytes()
+        assert len(stored) == storage['storedSize']
+        assert hashlib.sha256(stored).hexdigest() == storage['storedSHA256']
+        assert image.data.count(stored) == 1
+    assert (OUTPUT / 'AirPort.bin').read_bytes() not in image.data
+    assert len(image.data) < 14 * 1024 * 1024, 'Unexpected growth in the universal kext'
     targets = []
     addresses = {}
     verified_references = {}
@@ -371,6 +464,7 @@ def verify(configuration, references):
               'abiValidation': abi,
               'nativeABIValidation': native_abi,
               'baseAddEntries': len(fragment()['Kernel']['Add']), 'payloads': manifest['payloads'],
+              'binarySize': len(image.data), 'payloadStorage': manifest['payloadStorage'],
               'skywalkBackend': 'native', 'nativeAdapter': adapter, 'systemProfiles': manifest['systemProfiles'],
               'kernelRegistrationExecuted': False, 'openCoreLinkExecuted': False, 'hardwareValidation': 'not-run-by-build'}
     destination = ROOT / f'build/Validation-{configuration}.json'
