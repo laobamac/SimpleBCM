@@ -492,9 +492,10 @@ int Bridge::command(const Endpoint &endpoint, bool set, LegacyRequest &request, 
     IOSimpleLockUnlock(contextLock);
     const auto result = endpoint.kind == InterfaceKind::Classic ?
         classicCommand(endpoint.interface, endpoint.controller, set ? SetCommand : GetCommand, nullptr, &request.request) :
-        (set ? setRequest : getRequest)(endpoint.controller, nullptr,
+        (set ? setRequest : getRequest)(endpoint.controller,
+            endpoint.kind == InterfaceKind::Skywalk ? endpoint.interface : nullptr,
             endpoint.kind == InterfaceKind::Virtual ? endpoint.interface : nullptr,
-            endpoint.kind == InterfaceKind::Skywalk ? endpoint.interface : nullptr, &request);
+            nullptr, &request);
     IOSimpleLockLock(contextLock);
     for (auto cursor = &contexts; *cursor; cursor = &(*cursor)->next) {
         if (*cursor == &context) {
