@@ -193,6 +193,53 @@ bool Bridge::identify(IOService *interface, InterfaceKind kind, Endpoint &endpoi
     return true;
 }
 
+using LocaleQuery = int (*)(IOService *, OSObject *, LocaleData *);
+using CountryCodeQuery = int (*)(IOService *, OSObject *, CountryCodeData *);
+using CountryProperty = void (*)(IOService *, bool);
+using DriverRequest = int (*)(IOService *, uint32_t, int, IOService *, void *);
+
+static LocaleQuery originalLocale;
+static CountryCodeQuery getCountryCode;
+static CountryProperty originalCountryProperty;
+static DriverRequest classicRequest;
+
+static int getLocale(IOService *controller, OSObject *, LocaleData *output) {
+    const auto result = originalLocale(controller, nullptr, output);
+    if (result || !output || output->version != 1 || output->locale != LocaleUnknown)
+        return result;
+    CountryCodeData country {};
+    if (!getCountryCode(controller, nullptr, &country))
+        resolveLocale(*output, country);
+    return result;
+}
+
+static IOReturn updateCountryProperties(OSObject *target, void *argument, void *logging, void *, void *) {
+    auto controller = static_cast<IOService *>(target);
+    auto interface = static_cast<IOService *>(argument);
+    originalCountryProperty(interface, *static_cast<bool *>(logging));
+    LocaleData locale {};
+    if (interface->isInactive() || controller->isInactive() ||
+        !interface->getProperty("IO80211CountryCode") ||
+        classicRequest(controller, 0xC03069C9, 28, interface, &locale) || locale.version != 1)
+        interface->removeProperty("IO80211Locale");
+    else
+        interface->setProperty("IO80211Locale", localeString(locale.locale));
+    return kIOReturnSuccess;
+}
+
+static void updateCountryProperty(IOService *interface, bool logging) {
+    auto controller = classicController(interface);
+    auto loop = controller ? controller->getWorkLoop() : nullptr;
+    if (!controller || !controller->metaCast("AirPort_BrcmNIC") || !loop) {
+        originalCountryProperty(interface, logging);
+        return;
+    }
+    if (loop->runAction(updateCountryProperties, controller, interface, &logging) != kIOReturnSuccess) {
+        originalCountryProperty(interface, logging);
+        interface->removeProperty("IO80211Locale");
+    }
+}
+
 using HardwareVersion = IOReturn (*)(IOService *, OSObject *, void *);
 static HardwareVersion originalHardwareVersion;
 
@@ -622,7 +669,8 @@ void Bridge::patchImage(KernelPatcher &patcher, size_t index, mach_vm_address_t 
         virtualName = reinterpret_cast<BSDName>(patcher.solveSymbol(index, "__ZN23IO80211VirtualInterface10getBSDNameEv"));
         skywalkName = reinterpret_cast<BSDName>(patcher.solveSymbol(index, "__ZN23IO80211SkywalkInterface10getBSDNameEv"));
         classicCommand = reinterpret_cast<PerformCommand>(patcher.solveSymbol(index, "__ZN16IO80211Interface14performCommandEP19IONetworkControllermPvS2_"));
-        if (!getRequest || !setRequest || !classicController || !virtualController || !classicName || !virtualName || !skywalkName || !classicCommand) {
+        classicRequest = reinterpret_cast<DriverRequest>(patcher.solveSymbol(index, "__ZN17IO80211Controller22apple80211RequestIoctlEjiP16IO80211InterfacePv"));
+        if (!getRequest || !setRequest || !classicController || !virtualController || !classicName || !virtualName || !skywalkName || !classicCommand || !classicRequest) {
             patcher.clearError();
             reject("LegacySymbolsMissing");
             return;
@@ -633,6 +681,7 @@ void Bridge::patchImage(KernelPatcher &patcher, size_t index, mach_vm_address_t 
             {"__ZN16IO80211Interface27IO80211InterfacePostMessageEjPvm", postClassic, originalClassicEvent},
             {"__ZN23IO80211VirtualInterface27IO80211InterfacePostMessageEjPvm", postVirtual, originalVirtualEvent},
             {"__ZN21IO80211InfraInterface19postMessageInternalEjPvm", postInfra, originalInfraEvent},
+            {"__ZN16IO80211Interface25updateCountryCodePropertyEb", updateCountryProperty, originalCountryProperty},
         };
         if (!patcher.routeMultipleLong(index, routes, address, size) || !patchCopies(patcher, address, size, LegacyCopySites, arrsize(LegacyCopySites))) {
             patcher.clearError();
@@ -655,13 +704,21 @@ void Bridge::patchImage(KernelPatcher &patcher, size_t index, mach_vm_address_t 
             reject("AirPortCopyRoutingFailed");
             return;
         }
+        getCountryCode = reinterpret_cast<CountryCodeQuery>(patcher.solveSymbol(index,
+            "__ZN15AirPort_BrcmNIC15getCOUNTRY_CODEEP8OSObjectP28apple80211_country_code_data"));
+        if (!getCountryCode) {
+            patcher.clearError();
+            reject("CountryCodeSymbolMissing");
+            return;
+        }
         KernelPatcher::RouteRequest routes[] = {
             {"__ZN15AirPort_BrcmNIC19getHARDWARE_VERSIONEP8OSObjectP23apple80211_version_data",
-             getHardwareVersion, originalHardwareVersion}
+             getHardwareVersion, originalHardwareVersion},
+            {"__ZN15AirPort_BrcmNIC9getLOCALEEP8OSObjectP22apple80211_locale_data", getLocale, originalLocale},
         };
         if (!patcher.routeMultipleLong(index, routes, address, size)) {
             patcher.clearError();
-            reject("HardwareDescriptionRoutingFailed");
+            reject("AirPortQueryRoutingFailed");
             return;
         }
         __atomic_fetch_or(&state, 4U, __ATOMIC_RELEASE);

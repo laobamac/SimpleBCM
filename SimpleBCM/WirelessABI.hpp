@@ -134,6 +134,35 @@ struct CommandHeader {
     uint32_t length;
 };
 
+struct LocaleData {
+    uint32_t version;
+    uint32_t locale;
+};
+
+struct CountryCodeData {
+    uint32_t version;
+    char country[4];
+};
+
+constexpr uint32_t LocaleUnknown = 0;
+constexpr uint32_t LocaleETSI = 2;
+
+inline void resolveLocale(LocaleData &data, const CountryCodeData &country) {
+    if (data.version == 1 && data.locale == LocaleUnknown && country.version == 1 &&
+        country.country[0] == 'I' && country.country[1] == 'L' && country.country[2] == '\0')
+        data.locale = LocaleETSI;
+}
+
+inline const char *localeString(uint32_t locale) {
+    static const char *const names[] = {
+        "Unknown", "FCC", "ETSI", "Japan", "Korea", "APAC", "RoW", "Indonesia"
+    };
+    return locale < sizeof(names) / sizeof(names[0]) ? names[locale] : names[0];
+}
+
+static_assert(sizeof(LocaleData) == 8 && offsetof(LocaleData, locale) == 4, "Locale ABI");
+static_assert(sizeof(CountryCodeData) == 8 && offsetof(CountryCodeData, country) == 4, "Country code ABI");
+
 inline bool encodeScalarResult(Request &request, uint8_t *buffer, size_t capacity) {
     if (!buffer || capacity < sizeof(request.value) || request.length < sizeof(request.value))
         return false;

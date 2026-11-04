@@ -39,11 +39,20 @@ SYMBOLS = {
         "__ZN23IO80211VirtualInterface10getBSDNameEv",
         "__ZN23IO80211SkywalkInterface10getBSDNameEv",
         "__ZN16IO80211Interface14performCommandEP19IONetworkControllermPvS2_",
+        "__ZN17IO80211Controller22apple80211RequestIoctlEjiP16IO80211InterfacePv",
+        "__ZN16IO80211Interface25updateCountryCodePropertyEb",
     ],
-    "AirPort": ["_bcm_decode_anqp_nai_realm_print", "__dma_detach", "_dma64_txfast", "__dma_rxfill", "__dma_getnextrxp"],
+    "AirPort": ["_bcm_decode_anqp_nai_realm_print", "__dma_detach", "_dma64_txfast", "__dma_rxfill", "__dma_getnextrxp",
+                "__ZN15AirPort_BrcmNIC9getLOCALEEP8OSObjectP22apple80211_locale_data",
+                "__ZN15AirPort_BrcmNIC15getCOUNTRY_CODEEP8OSObjectP28apple80211_country_code_data"],
 }
 SYMBOLS["AirPortOriginal"] = SYMBOLS["AirPort"]
 HARDWARE_VERSION_SYMBOL = "__ZN15AirPort_BrcmNIC19getHARDWARE_VERSIONEP8OSObjectP23apple80211_version_data"
+ROUTE_SYMBOLS = {
+    "Legacy": SYMBOLS["Legacy"][:5] + ["__ZN16IO80211Interface25updateCountryCodePropertyEb"],
+    "AirPort": [HARDWARE_VERSION_SYMBOL, "__ZN15AirPort_BrcmNIC9getLOCALEEP8OSObjectP22apple80211_locale_data"],
+}
+ROUTE_SYMBOLS["AirPortOriginal"] = ROUTE_SYMBOLS["AirPort"]
 SCALAR_GET_REQUESTS = [5, 8, 13, 15, 18, 21, 26, 28, 31, 33, 34, 35, 36, 41, 45, 50, 52, 55, 56, 57, 58, 59, 60,
                        63, 64, 70, 71, 72, 82, 87, 88, 96, 100, 101, 235, 241, 256, 258, 259, 261, 265, 267, 336, 353, 369]
 

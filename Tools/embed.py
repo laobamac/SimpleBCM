@@ -16,7 +16,7 @@ import subprocess
 
 from bootstrap import ROOT, validate_payloads
 from macho import Image
-from profiles import IMAGES, SYMBOLS, HARDWARE_VERSION_SYMBOL
+from profiles import IMAGES, SYMBOLS, HARDWARE_VERSION_SYMBOL, ROUTE_SYMBOLS
 from native_payload import SkywalkPlan, emit_system_profiles, prepare_native_guards
 from system_profiles import SYSTEMS
 
@@ -92,7 +92,7 @@ def parse(image):
 
 
 def route_prefixes(image, label):
-    names = SYMBOLS['Legacy'][:5] if label == 'Legacy' else [HARDWARE_VERSION_SYMBOL]
+    names = ROUTE_SYMBOLS[label]
     result = []
     for name in names:
         text = subprocess.check_output(['xcrun', 'llvm-objdump', '--arch=x86_64', '-d',
