@@ -134,76 +134,34 @@ struct CommandHeader {
     uint32_t length;
 };
 
-enum Apple80211Locale : uint32_t {
-    LocaleUnknown   = 0,
-    LocaleFCC       = 1,
-    LocaleETSI      = 2,
-    LocaleJapan     = 3,
-    LocaleKorea     = 4,
-    LocaleAPAC      = 5,
-    LocaleRoW       = 6,
-    LocaleIndonesia = 7
+struct LocaleData {
+    uint32_t version;
+    uint32_t locale;
 };
 
+struct CountryCodeData {
+    uint32_t version;
+    char country[4];
+};
+
+constexpr uint32_t LocaleUnknown = 0;
+constexpr uint32_t LocaleETSI = 2;
+
+inline void resolveLocale(LocaleData &data, const CountryCodeData &country) {
+    if (data.version == 1 && data.locale == LocaleUnknown && country.version == 1 &&
+        country.country[0] == 'I' && country.country[1] == 'L' && country.country[2] == '\0')
+        data.locale = LocaleETSI;
+}
+
 inline const char *localeString(uint32_t locale) {
-    switch (locale) {
-        case LocaleFCC:       return "FCC";
-        case LocaleETSI:      return "ETSI";
-        case LocaleJapan:     return "Japan";
-        case LocaleKorea:     return "Korea";
-        case LocaleAPAC:      return "APAC";
-        case LocaleRoW:       return "RoW";
-        case LocaleIndonesia: return "Indonesia";
-        default:              return "Unknown";
-    }
+    static const char *const names[] = {
+        "Unknown", "FCC", "ETSI", "Japan", "Korea", "APAC", "RoW", "Indonesia"
+    };
+    return locale < sizeof(names) / sizeof(names[0]) ? names[locale] : names[0];
 }
 
-inline uint32_t localeForCountryCode(const char *cc) {
-    if (!cc || !cc[0] || !cc[1])
-        return LocaleUnknown;
-    char c0 = cc[0] >= 'a' && cc[0] <= 'z' ? cc[0] - 'a' + 'A' : cc[0];
-    char c1 = cc[1] >= 'a' && cc[1] <= 'z' ? cc[1] - 'a' + 'A' : cc[1];
-    uint16_t code = (static_cast<uint16_t>(c0) << 8) | static_cast<uint8_t>(c1);
-
-    if (code == (('J' << 8) | 'P')) return LocaleJapan;
-    if (code == (('K' << 8) | 'R')) return LocaleKorea;
-    if (code == (('I' << 8) | 'D')) return LocaleIndonesia;
-
-    static const uint16_t fcc[] = {
-        ('U' << 8) | 'S', ('C' << 8) | 'A', ('C' << 8) | 'O', ('D' << 8) | 'O',
-        ('G' << 8) | 'T', ('M' << 8) | 'X', ('P' << 8) | 'A', ('P' << 8) | 'R',
-        ('T' << 8) | 'W', ('V' << 8) | 'I', ('X' << 8) | 'B', ('X' << 8) | '0'
-    };
-    for (size_t i = 0; i < sizeof(fcc) / sizeof(fcc[0]); ++i)
-        if (code == fcc[i]) return LocaleFCC;
-
-    static const uint16_t etsi[] = {
-        ('I' << 8) | 'L', ('A' << 8) | 'T', ('B' << 8) | 'E', ('B' << 8) | 'G',
-        ('C' << 8) | 'H', ('C' << 8) | 'Y', ('C' << 8) | 'Z', ('D' << 8) | 'E',
-        ('D' << 8) | 'K', ('E' << 8) | 'E', ('E' << 8) | 'S', ('F' << 8) | 'I',
-        ('F' << 8) | 'R', ('G' << 8) | 'B', ('G' << 8) | 'R', ('H' << 8) | 'R',
-        ('H' << 8) | 'U', ('I' << 8) | 'E', ('I' << 8) | 'S', ('I' << 8) | 'T',
-        ('L' << 8) | 'I', ('L' << 8) | 'T', ('L' << 8) | 'U', ('L' << 8) | 'V',
-        ('M' << 8) | 'T', ('N' << 8) | 'L', ('N' << 8) | 'O', ('P' << 8) | 'L',
-        ('P' << 8) | 'T', ('R' << 8) | 'O', ('R' << 8) | 'S', ('R' << 8) | 'U',
-        ('S' << 8) | 'E', ('S' << 8) | 'I', ('S' << 8) | 'K', ('T' << 8) | 'R',
-        ('U' << 8) | 'A', ('Z' << 8) | 'A', ('X' << 8) | 'A', ('X' << 8) | '3'
-    };
-    for (size_t i = 0; i < sizeof(etsi) / sizeof(etsi[0]); ++i)
-        if (code == etsi[i]) return LocaleETSI;
-
-    static const uint16_t apac[] = {
-        ('A' << 8) | 'U', ('N' << 8) | 'Z', ('C' << 8) | 'N', ('H' << 8) | 'K',
-        ('S' << 8) | 'G', ('M' << 8) | 'Y', ('T' << 8) | 'H', ('P' << 8) | 'H',
-        ('V' << 8) | 'N', ('I' << 8) | 'N', ('X' << 8) | '1'
-    };
-    for (size_t i = 0; i < sizeof(apac) / sizeof(apac[0]); ++i)
-        if (code == apac[i]) return LocaleAPAC;
-
-    if (code == (('X' << 8) | '2')) return LocaleRoW;
-
-    return LocaleRoW;
-}
+static_assert(sizeof(LocaleData) == 8 && offsetof(LocaleData, locale) == 4, "Locale ABI");
+static_assert(sizeof(CountryCodeData) == 8 && offsetof(CountryCodeData, country) == 4, "Country code ABI");
 
 inline bool encodeScalarResult(Request &request, uint8_t *buffer, size_t capacity) {
     if (!buffer || capacity < sizeof(request.value) || request.length < sizeof(request.value))

@@ -64,6 +64,14 @@
           "symbol": "__ZN16IO80211Interface14performCommandEP19IONetworkControllermPvS2_"
         },
         {
+          "address": "0x8ee5c",
+          "symbol": "__ZN17IO80211Controller22apple80211RequestIoctlEjiP16IO80211InterfacePv"
+        },
+        {
+          "address": "0x97bc4",
+          "symbol": "__ZN16IO80211Interface25updateCountryCodePropertyEb"
+        },
+        {
           "address": "0x78617",
           "symbol": "__ZL12getPowersaveP17IO80211ControllerP16IO80211InterfaceP23IO80211VirtualInterfaceP21IO80211InfraInterfaceP13apple80211reqb+0x0"
         },
@@ -608,6 +616,14 @@
           "symbol": "__dma_getnextrxp"
         },
         {
+          "address": "0x3cf70",
+          "symbol": "__ZN15AirPort_BrcmNIC9getLOCALEEP8OSObjectP22apple80211_locale_data"
+        },
+        {
+          "address": "0x3e05a",
+          "symbol": "__ZN15AirPort_BrcmNIC15getCOUNTRY_CODEEP8OSObjectP28apple80211_country_code_data"
+        },
+        {
           "address": "0x38538",
           "symbol": "__ZN15AirPort_BrcmNIC11wlIocCommonEP13apple80211reqP8OSObjectbb+0x70"
         },
@@ -670,6 +686,14 @@
         {
           "address": "0x2c41da",
           "symbol": "__dma_getnextrxp"
+        },
+        {
+          "address": "0x3cf70",
+          "symbol": "__ZN15AirPort_BrcmNIC9getLOCALEEP8OSObjectP22apple80211_locale_data"
+        },
+        {
+          "address": "0x3e05a",
+          "symbol": "__ZN15AirPort_BrcmNIC15getCOUNTRY_CODEEP8OSObjectP28apple80211_country_code_data"
         },
         {
           "address": "0x38538",

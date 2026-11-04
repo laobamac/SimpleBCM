@@ -8,7 +8,6 @@
 
 #include "NativeSkywalk.hpp"
 #include "Patcher.hpp"
-#include "WirelessABI.hpp"
 #include <IOKit/IOEventSource.h>
 #include <IOKit/IOWorkLoop.h>
 #include <IOKit/IOLocks.h>
@@ -158,26 +157,6 @@ static void copyProperties(InterfaceContext *context) {
             context->native->setProperty(name, properties->getObject(name));
         }
         iterator->release();
-    }
-    for (IOService *parent = context->owner->getProvider(); parent; parent = parent->getProvider()) {
-        if (parent->metaCast("AirPort_BrcmNIC")) {
-            auto cc = OSDynamicCast(OSString, parent->getProperty("IO80211CountryCode"));
-            if (cc) {
-                context->owner->setProperty("IO80211CountryCode", cc);
-                context->native->setProperty("IO80211CountryCode", cc);
-                uint32_t loc = bcm::localeForCountryCode(cc->getCStringNoCopy());
-                if (loc != bcm::LocaleUnknown) {
-                    context->owner->setProperty("IO80211Locale", bcm::localeString(loc));
-                    context->native->setProperty("IO80211Locale", bcm::localeString(loc));
-                }
-            }
-            auto locProp = OSDynamicCast(OSString, parent->getProperty("IO80211Locale"));
-            if (locProp) {
-                context->owner->setProperty("IO80211Locale", locProp);
-                context->native->setProperty("IO80211Locale", locProp);
-            }
-            break;
-        }
     }
     properties->release();
 }

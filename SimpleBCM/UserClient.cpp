@@ -337,56 +337,6 @@ IOReturn BCM80211UserClient::runCommand(IOExternalMethodArguments *arguments, si
     } else {
         result = static_cast<IOReturn>(bcm::Bridge::command(endpoint, set, legacy, shadow, capacity));
     }
-    if (get && request == 28) {
-        if (result != kIOReturnSuccess || legacy.request.value == 0) {
-            char country[4] = {};
-            auto ccProp = endpoint.interface ? endpoint.interface->getProperty("IO80211CountryCode") : nullptr;
-            if (!ccProp && endpoint.controller)
-                ccProp = endpoint.controller->getProperty("IO80211CountryCode");
-            auto ccStr = OSDynamicCast(OSString, ccProp);
-            if (ccStr) {
-                strlcpy(country, ccStr->getCStringNoCopy(), sizeof(country));
-            } else {
-                bcm::LegacyRequest ccReq {};
-                strlcpy(ccReq.request.interfaceName, endpoint.name, sizeof(ccReq.request.interfaceName));
-                ccReq.request.type = 51;
-                ccReq.request.length = 3;
-                ccReq.request.data = reinterpret_cast<uint64_t>(country);
-                ccReq.pointerSize = 8;
-                bcm::Bridge::command(endpoint, false, ccReq, country, sizeof(country));
-            }
-            uint32_t resolved = bcm::localeForCountryCode(country);
-            if (resolved != bcm::LocaleUnknown) {
-                legacy.request.value = static_cast<int32_t>(resolved);
-                legacy.request.length = sizeof(legacy.request.value);
-                result = kIOReturnSuccess;
-            }
-        }
-        if (result == kIOReturnSuccess && legacy.request.value != 0) {
-            const char *loc = bcm::localeString(static_cast<uint32_t>(legacy.request.value));
-            if (endpoint.interface)
-                endpoint.interface->setProperty("IO80211Locale", loc);
-            if (endpoint.controller)
-                endpoint.controller->setProperty("IO80211Locale", loc);
-        }
-    } else if (get && request == 51 && result == kIOReturnSuccess && legacy.request.length >= 2) {
-        char country[4] = {};
-        strlcpy(country, reinterpret_cast<const char *>(shadow), sizeof(country));
-        if (country[0] && country[1]) {
-            if (endpoint.interface)
-                endpoint.interface->setProperty("IO80211CountryCode", country);
-            if (endpoint.controller)
-                endpoint.controller->setProperty("IO80211CountryCode", country);
-            uint32_t resolved = bcm::localeForCountryCode(country);
-            if (resolved != bcm::LocaleUnknown) {
-                const char *loc = bcm::localeString(resolved);
-                if (endpoint.interface)
-                    endpoint.interface->setProperty("IO80211Locale", loc);
-                if (endpoint.controller)
-                    endpoint.controller->setProperty("IO80211Locale", loc);
-            }
-        }
-    }
     if (result == kIOReturnSuccess) {
         if (capabilities && !bcm::expandCapabilities(legacy.request, shadow, capacity, abi,
                                                    endpoint.kind == bcm::InterfaceKind::Classic)) {
