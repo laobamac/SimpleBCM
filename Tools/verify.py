@@ -25,6 +25,7 @@ HOST_SOURCE = r'''
 
 #include "WirelessABI.hpp"
 #include "HardwareIdentity.hpp"
+#include "PCIRecovery.hpp"
 #include <CoreFoundation/CoreFoundation.h>
 #include <IOKit/IOKitLib.h>
 #include <mach-o/loader.h>
@@ -865,7 +866,112 @@ static void hardwareIdentityVectors() {
     assert(!strcmp(description, "AirPort Extreme (0x14E4, 0xE9)"));
 }
 
+static void pciRecoveryVectors() {
+    struct Bus {
+        bcm::PCIConfiguration current;
+        bcm::PCIConfiguration resetImage;
+        bool isolated = true;
+        bool absent = false;
+        bool recoverLink = true;
+        unsigned failureOffset = 256;
+        unsigned resets = 0;
+        unsigned waited = 0;
+        struct Write { unsigned offset; unsigned width; uint32_t value; };
+        std::vector<Write> writes;
+        uint32_t read32(unsigned offset) { assert(offset < 256 && !(offset & 3)); return absent ? UINT32_MAX : current.words[offset / 4]; }
+        uint16_t read16(unsigned offset) { assert(offset < 255 && !(offset & 1)); return absent ? UINT16_MAX : current.word(offset); }
+        void write(unsigned offset, unsigned width, uint32_t value) {
+            assert(offset + width <= 256);
+            writes.push_back({offset, width, value});
+            if (offset == failureOffset || absent) return;
+            const auto shift = (offset & 3) * 8;
+            const uint32_t mask = (width == 4 ? UINT32_MAX : (1U << (width * 8)) - 1) << shift;
+            current.words[offset / 4] = (current.words[offset / 4] & ~mask) | ((value << shift) & mask);
+        }
+        void write32(unsigned offset, uint32_t value) { write(offset, 4, value); }
+        void write16(unsigned offset, uint16_t value) { write(offset, 2, value); }
+        void write8(unsigned offset, uint8_t value) { write(offset, 1, value); }
+        void wait(unsigned value) { waited += value; }
+        bool reset() {
+            ++resets;
+            if (!isolated) return false;
+            if (recoverLink) { current = resetImage; absent = false; }
+            return true;
+        }
+    };
+    bcm::PCIConfiguration saved {};
+    saved.registryID = 42;
+    saved.words[0] = 0x435314e4;
+    saved.words[1] = 0x00100406;
+    saved.words[2] = 0x02800001;
+    saved.words[4] = 0x81e00004;
+    saved.words[0x34 / 4] = 0x40;
+    saved.words[0x40 / 4] = 0x00005001;
+    saved.words[0x44 / 4] = 0x8000;
+    saved.words[0x50 / 4] = 0x01817005;
+    saved.words[0x54 / 4] = 0xfee00000;
+    saved.words[0x58 / 4] = 0;
+    saved.words[0x5c / 4] = 0x62;
+    saved.words[0x60 / 4] = 0x123;
+    saved.words[0x70 / 4] = 0x00020010;
+    saved.words[0x80 / 4] = 0x140;
+    assert(saved.valid());
+    auto lost = saved;
+    lost.words[4] = 4;
+    lost.words[1] &= ~6U;
+    lost.words[0x54 / 4] = 0;
+    lost.words[0x5c / 4] = 0;
+    auto make = [&]() { Bus bus {}; bus.current = lost; bus.resetImage = lost; return bus; };
+    using Result = bcm::PCIRecoveryResult;
+    auto bus = make();
+    bus.current = saved;
+    assert(bcm::recoverPCIConfiguration(bus, saved) == Result::Unchanged && bus.writes.empty() && !bus.resets);
+    bus = make();
+    assert(bcm::recoverPCIConfiguration(bus, saved) == Result::Restored && !bus.resets);
+    assert(bus.writes.front().offset == 4 && !(bus.writes.front().value & 7));
+    assert(bus.current.words[4] == saved.words[4] && bus.current.words[0x54 / 4] == 0xfee00000);
+    assert(bus.writes.back().offset == 4 && bus.writes.back().value == saved.word(4));
+    for (auto w : bus.writes) {
+        assert(w.offset != 0 && w.offset != 6 && w.offset != 8 && w.offset != 0x7a && w.offset != 0x82);
+        if (w.offset == 0x44) assert(!(w.value & 0x8003));
+    }
+    bus = make(); bus.absent = true;
+    assert(bcm::recoverPCIConfiguration(bus, saved) == Result::Restored && bus.resets == 1);
+    bus = make(); bus.absent = true; bus.isolated = false;
+    assert(bcm::recoverPCIConfiguration(bus, saved) == Result::ResetRefused && bus.writes.empty());
+    bus = make(); bus.absent = true; bus.recoverLink = false;
+    assert(bcm::recoverPCIConfiguration(bus, saved) == Result::LinkUnavailable && bus.waited == 1000 && bus.writes.empty());
+    bus = make(); bus.current.words[0] = 0x43a014e4;
+    assert(bcm::recoverPCIConfiguration(bus, saved) == Result::IdentityChanged && bus.writes.empty() && !bus.resets);
+    bus = make(); bus.current.words[4] = 0x82e00004;
+    assert(bcm::recoverPCIConfiguration(bus, saved) == Result::ResourceChanged && bus.writes.empty());
+    for (auto offset : {0x10U, 0x54U, 0x5cU}) {
+        bus = make(); bus.failureOffset = offset;
+        assert(bcm::recoverPCIConfiguration(bus, saved) == Result::RestoreFailed);
+        assert(!(bus.current.word(4) & 4));
+    }
+    bus = make(); bus.current.words[1] |= 6; bus.failureOffset = 4;
+    assert(bcm::recoverPCIConfiguration(bus, saved) == Result::RestoreFailed && bus.writes.size() == 1);
+    auto invalid = saved;
+    invalid.words[0x40 / 4] = 0x4001;
+    bus = make();
+    assert(bcm::recoverPCIConfiguration(bus, invalid) == Result::InvalidSnapshot && bus.writes.empty());
+    for (unsigned offset = 1; offset < 256; ++offset) {
+        invalid = saved;
+        invalid.words[0x34 / 4] = offset;
+        if (offset < 0x40 || (offset & 3)) assert(!invalid.valid());
+    }
+    for (unsigned i = 0; i < 4096; ++i) {
+        invalid = saved;
+        invalid.words[0x34 / 4] = 0xfc;
+        invalid.words[63] = randomValue();
+        bus = make();
+        bcm::recoverPCIConfiguration(bus, invalid);
+    }
+}
+
 int main() {
+    pciRecoveryVectors();
     hardwareIdentityVectors();
     profileBoundaries();
     boundaries<23>();

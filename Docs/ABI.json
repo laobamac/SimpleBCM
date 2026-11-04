@@ -624,6 +624,18 @@
           "symbol": "__ZN15AirPort_BrcmNIC15getCOUNTRY_CODEEP8OSObjectP28apple80211_country_code_data"
         },
         {
+          "address": "0x2a4c4",
+          "symbol": "__ZN15AirPort_BrcmNIC10startGatedEP9IOService"
+        },
+        {
+          "address": "0x14839e",
+          "symbol": "_wlc_verify_d3_exit"
+        },
+        {
+          "address": "0x34f26",
+          "symbol": "__ZN15AirPort_BrcmNIC14syncPowerStateEmi"
+        },
+        {
           "address": "0x38538",
           "symbol": "__ZN15AirPort_BrcmNIC11wlIocCommonEP13apple80211reqP8OSObjectbb+0x70"
         },
@@ -642,6 +654,10 @@
         {
           "address": "0x2c4286",
           "symbol": "RX consume backend identity"
+        },
+        {
+          "address": "0x148494",
+          "symbol": "wlc controller pointer at +0x10"
         }
       ],
       "copySites": [
@@ -696,6 +712,18 @@
           "symbol": "__ZN15AirPort_BrcmNIC15getCOUNTRY_CODEEP8OSObjectP28apple80211_country_code_data"
         },
         {
+          "address": "0x2a4c4",
+          "symbol": "__ZN15AirPort_BrcmNIC10startGatedEP9IOService"
+        },
+        {
+          "address": "0x14839e",
+          "symbol": "_wlc_verify_d3_exit"
+        },
+        {
+          "address": "0x34f26",
+          "symbol": "__ZN15AirPort_BrcmNIC14syncPowerStateEmi"
+        },
+        {
           "address": "0x38538",
           "symbol": "__ZN15AirPort_BrcmNIC11wlIocCommonEP13apple80211reqP8OSObjectbb+0x70"
         },
@@ -714,6 +742,10 @@
         {
           "address": "0x2c4286",
           "symbol": "RX consume backend identity"
+        },
+        {
+          "address": "0x148494",
+          "symbol": "wlc controller pointer at +0x10"
         }
       ],
       "copySites": [

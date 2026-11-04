@@ -23,7 +23,7 @@ from system_profiles import SYSTEMS
 
 OUTPUT = ROOT / 'build/Embedded'
 LABELS = ['Legacy', 'AirPortOriginal', 'AirPort']
-VERSION = '1.2.0'
+VERSION = '1.2.1'
 ALIASES = {
     '__ZN26IOSkywalkEthernetInterface18getHardwareAddressEP12ether_addr_t':
         '__ZN26IOSkywalkEthernetInterface18getHardwareAddressEP10ether_addr',

@@ -25,6 +25,7 @@
 		000000000000000000000143 = {isa = PBXBuildFile; fileRef = 00000000000000000000012F; };
 		000000000000000000000160 = {isa = PBXBuildFile; fileRef = 000000000000000000000161; };
 		000000000000000000000170 = {isa = PBXBuildFile; fileRef = 000000000000000000000171; };
+		000000000000000000000180 = {isa = PBXBuildFile; fileRef = 000000000000000000000181; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -54,6 +55,8 @@
 		000000000000000000000171 = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = NativeUserClient.cpp; sourceTree = "<group>"; };
 		000000000000000000000172 = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = NativeUserClient.hpp; sourceTree = "<group>"; };
 		000000000000000000000173 = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = HardwareIdentity.hpp; sourceTree = "<group>"; };
+		000000000000000000000181 = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = PCIRecovery.cpp; sourceTree = "<group>"; };
+		000000000000000000000182 = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = PCIRecovery.hpp; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXGroup section */
@@ -79,6 +82,8 @@
 				000000000000000000000171,
 				000000000000000000000172,
 				000000000000000000000173,
+				000000000000000000000181,
+				000000000000000000000182,
 				000000000000000000000078 /* Info.plist */,
 			);
 			path = SimpleBCM;
@@ -180,6 +185,7 @@
 				000000000000000000000143,
 				000000000000000000000160,
 				000000000000000000000170,
+				000000000000000000000180,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

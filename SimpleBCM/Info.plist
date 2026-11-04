@@ -79,6 +79,6 @@
 	<key>OSBundleRequired</key>
 	<string>Root</string>
 	<key>OSBundleCompatibleVersion</key>
-	<string>1.2.0</string>
+	<string>1.2.1</string>
 </dict>
 </plist>

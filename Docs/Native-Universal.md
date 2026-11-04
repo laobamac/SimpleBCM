@@ -46,6 +46,8 @@ Legacy 与原生 IO80211Family 的冲突元类在载荷 CString 中重命名，�
 
 ## 电源与载荷
 
+v1.2.1 增加内嵌 AirPort 的受限 PCI 配置恢复，详见 [PCI-Recovery.md](PCI-Recovery.md)。
+
 原生 IOSkywalkNetworkBSDClient 的电源父节点通过 `joinPMtree` 接到无线控制器的实际 IOPCIDevice provider；网络 IOService 的 provider 关系保持不变。接口上下文持有 PCI provider，停止或启动失败时释放。AirPort 原始电源表不作改写。
 
 载荷原件由 `Tools/bootstrap.py` 固定提交与 SHA-256。两种 AirPort 共用一份基础载荷和相同的重定位、符号及入口表，Tahoe 的差异以偏移、长度和替换字节保存。启动时仅在选中载荷的独立映射中恢复字节，差分边界检查通过后才写入，完整载荷校验通过后才重定位；基础载荷保持只读，不增加收发阶段的处理。

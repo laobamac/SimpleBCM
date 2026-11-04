@@ -28,7 +28,7 @@ OTHER_CFLAGS = -Wall -Wextra -Werror -Wno-unused-parameter -Wno-deprecated-decla
 OTHER_LDFLAGS = -static
 GCC_PREPROCESSOR_DEFINITIONS = $(inherited) PRODUCT_NAME=SimpleBCM MODULE_VERSION=$(MODULE_VERSION)
 MODULE_NAME = cn.laobamac.SimpleBCM
-MODULE_VERSION = 1.2.0
+MODULE_VERSION = 1.2.1
 MODULE_START = SimpleBCM_kern_start
 MODULE_STOP = SimpleBCM_kern_stop
 PRODUCT_NAME = SimpleBCM

@@ -12,6 +12,7 @@
 #include "Profiles.hpp"
 #include "UserClient.hpp"
 #include "HardwareIdentity.hpp"
+#include "PCIRecovery.hpp"
 #include <IOKit/IOLib.h>
 #include <IOKit/IOWorkLoop.h>
 #include <libkern/c++/OSData.h>
@@ -721,6 +722,10 @@ void Bridge::patchImage(KernelPatcher &patcher, size_t index, mach_vm_address_t 
             reject("AirPortQueryRoutingFailed");
             return;
         }
+        if (!preparePCIRecovery(patcher, index, address, size)) {
+            reject("PCIRecoveryRoutingFailed");
+            return;
+        }
         __atomic_fetch_or(&state, 4U, __ATOMIC_RELEASE);
     }
     if (ready()) {
@@ -760,7 +765,7 @@ void Bridge::publish(IOService *service) {
     service->setProperty("Status", __atomic_load_n(&failure, __ATOMIC_ACQUIRE));
     service->setProperty("PatchState", __atomic_load_n(&state, __ATOMIC_ACQUIRE), 32);
     service->setProperty("SupportedKernel", "23.x / 24.x / 25.x");
-    service->setProperty("AdapterVersion", "1.2.0");
+    service->setProperty("AdapterVersion", "1.2.1");
     service->setProperty("NativePowerDomainPatched", false);
     IOService *controller = nullptr;
     if (hubLock) {
@@ -771,6 +776,7 @@ void Bridge::publish(IOService *service) {
         IOSimpleLockUnlockEnableInterrupt(hubLock, interruptState);
     }
     if (controller) {
+        publishPCIRecovery(service, controller);
         service->setProperty("WirelessControllerIdentity", controller->metaCast("AirPortDriver") ? "AirPortDriver" : "Unrecognized");
         auto bytes = reinterpret_cast<const uint8_t *>(controller);
         service->setProperty("BrcmPowerState", __atomic_load_n(reinterpret_cast<const uint64_t *>(bytes + 6800), __ATOMIC_RELAXED), 64);
