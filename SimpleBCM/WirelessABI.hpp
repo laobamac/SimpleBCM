@@ -146,11 +146,11 @@ struct CountryCodeData {
 
 constexpr uint32_t LocaleUnknown = 0;
 constexpr uint32_t LocaleETSI = 2;
+constexpr uint32_t LocaleRoW = 6;
 
 inline void resolveLocale(LocaleData &data, const CountryCodeData &country) {
-    if (data.version == 1 && data.locale == LocaleUnknown && country.version == 1 &&
-        country.country[0] == 'I' && country.country[1] == 'L' && country.country[2] == '\0')
-        data.locale = LocaleETSI;
+    if (data.version == 1 && data.locale == LocaleUnknown && country.version == 1 && country.country[0] != '\0')
+        data.locale = LocaleRoW;
 }
 
 inline const char *localeString(uint32_t locale) {
