@@ -12,6 +12,7 @@
 #include "Profiles.hpp"
 #include "UserClient.hpp"
 #include "HardwareIdentity.hpp"
+#include "RadioPolicy.hpp"
 #include <IOKit/IOLib.h>
 #include <IOKit/IOWorkLoop.h>
 #include <libkern/c++/OSData.h>
@@ -650,6 +651,9 @@ bool Bridge::prepareImage(LinkedImage &image, size_t index) {
         return false;
     KernelPatcher patcher(image);
     patchImage(patcher, index, image.address, image.payload->mappedSize);
+    if (index == 1 && !(__atomic_load_n(&state, __ATOMIC_ACQUIRE) & 0x80000000U) &&
+        !RadioPolicy::prepare(image))
+        reject("RadioPolicyPreparationFailed");
     return !(__atomic_load_n(&state, __ATOMIC_ACQUIRE) & 0x80000000U);
 }
 
@@ -757,10 +761,11 @@ void Bridge::trackController(IOService *controller) {
 }
 
 void Bridge::publish(IOService *service) {
+    RadioPolicy::publish(service);
     service->setProperty("Status", __atomic_load_n(&failure, __ATOMIC_ACQUIRE));
     service->setProperty("PatchState", __atomic_load_n(&state, __ATOMIC_ACQUIRE), 32);
     service->setProperty("SupportedKernel", "23.x / 24.x / 25.x");
-    service->setProperty("AdapterVersion", "1.2.0");
+    service->setProperty("AdapterVersion", "1.2.1");
     service->setProperty("NativePowerDomainPatched", false);
     IOService *controller = nullptr;
     if (hubLock) {

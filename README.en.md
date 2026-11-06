@@ -9,7 +9,7 @@
 
 # SimpleBCM
 
-![Version](https://img.shields.io/badge/version-1.2.0-2563eb)
+![Version](https://img.shields.io/badge/version-1.2.1-2563eb)
 ![macOS](https://img.shields.io/badge/macOS-Sonoma%2014%20%7C%20Sequoia%2015%20%7C%20Tahoe%2026-111827)
 ![Architecture](https://img.shields.io/badge/arch-x86__64-6b7280)
 ![OpenCore](https://img.shields.io/badge/boot-OpenCore-16a34a)
@@ -19,6 +19,8 @@
 </div>
 
 SimpleBCM restores Broadcom Wi-Fi on macOS Sonoma, Sequoia and Tahoe through OpenCore injection. One kext uses each system’s native IOSkywalkFamily without modifying the system volume.
+
+Version 1.2.1 restores 80 MHz operation on channels 36–48 for affected CN regulatory records while retaining native sleep recovery. See [radio policy](Docs/Radio-Policy.md) for scope and implementation.
 
 ## Installation
 

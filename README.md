@@ -9,7 +9,7 @@
 
 # SimpleBCM
 
-![Version](https://img.shields.io/badge/version-1.2.0-2563eb)
+![Version](https://img.shields.io/badge/version-1.2.1-2563eb)
 ![macOS](https://img.shields.io/badge/macOS-Sonoma%2014%20%7C%20Sequoia%2015%20%7C%20Tahoe%2026-111827)
 ![Architecture](https://img.shields.io/badge/arch-x86__64-6b7280)
 ![OpenCore](https://img.shields.io/badge/boot-OpenCore-16a34a)
@@ -19,6 +19,8 @@
 </div>
 
 SimpleBCM 通过 OpenCore 注入恢复 macOS Sonoma、Sequoia 和 Tahoe 的 Broadcom Wi-Fi 支持。同一个 Kext 使用各系统原生 IOSkywalkFamily，无需修改系统卷。
+
+1.2.1 修复部分 CN 地区记录在 36–48 信道下无法协商 80 MHz 的问题，保留原生睡眠恢复行为。覆盖范围和实现见 [无线地区策略](Docs/Radio-Policy.md)。
 
 ## 安装
 

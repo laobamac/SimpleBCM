@@ -26,6 +26,8 @@ python3 -B Tools/build.py package --configuration Release --channel pre
 
 打包要求构建、校验和静态分析对应当前源码指纹。`--channel pre` 使用提交号命名 alpha 包，`--channel rel` 使用正式版本号。构建输出在 `build`，压缩包在 `dist`。
 
+无线地区策略校验直接在用户态执行原始和 Tahoe 载荷中的 CLM 函数，检查 2,710 条国家记录、八个 CN 修订号及生产代码的安装边界。结果记入 `Validation.json`，生成规则记入 `RadioPolicy.json`；临时验证源码自动清理，不加入发布包。构建还检查生成的地区表确实进入 Kext。
+
 ## 更新 ABI 参考数据
 
 维护适配配置时，可设置 `SIMPLEBCM_NATIVE_SOURCE=system` 直接读取原生内核集合。默认读取当前系统及 `/Volumes/Macintosh HD 1`、`/Volumes/Macintosh HD 2`，按实际版本与 UUID 匹配 [Native-Universal.md](Native-Universal.md) 中的参考系统。

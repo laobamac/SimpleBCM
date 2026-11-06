@@ -456,12 +456,21 @@ def verify(configuration, references):
             native_abi[system] = verify_native(temp, binary, system)
         from verify import verify_abi
         abi = verify_abi(temp)
+        from verify_radio_policy import verify_policy
+        radio = verify_policy(temp)
+    from clm_policy import CLM
+    model = CLM('BrcmTahoe')
+    countries, locales, _ = model.generate()
+    model.image.close()
+    assert image.data.count(countries) == 1 and image.data.count(locales) == 1
     assert source_fingerprint == fingerprint()
     result = {'version': VERSION, 'configuration': configuration, 'driverLoading': 'embedded',
               'sourceFingerprint': source_fingerprint, 'sha256': digest(binary), 'uuid': image.uuid,
               'probeSHA256': digest(product.parent / 'bcmprobe'), 'nativeTargets': targets,
               'relocationValidation': runs, 'sanitizers': ['AddressSanitizer', 'UndefinedBehaviorSanitizer'],
               'abiValidation': abi,
+              'radioPolicyValidation': radio,
+              'radioPolicy': json.loads((OUTPUT / 'RadioPolicy.json').read_text()),
               'nativeABIValidation': native_abi,
               'baseAddEntries': len(fragment()['Kernel']['Add']), 'payloads': manifest['payloads'],
               'binarySize': len(image.data), 'payloadStorage': manifest['payloadStorage'],
@@ -526,6 +535,7 @@ def package(configuration, channel='rel'):
         for document in (ROOT / 'Docs').glob('*.md'):
             shutil.copy2(document, stage / 'Docs' / document.name)
         (extra / 'Validation.json').write_text(json.dumps(report, indent=2) + '\n')
+        shutil.copy2(OUTPUT / 'RadioPolicy.json', extra / 'RadioPolicy.json')
         save_plist(stage / 'config.fragment.plist', fragment())
         save_plist(extra / 'config.AirportBrcmFixup.fragment.plist', fragment(True))
         files = {str(p.relative_to(stage)): digest(p) for p in stage.rglob('*') if p.is_file()}

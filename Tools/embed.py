@@ -23,7 +23,7 @@ from system_profiles import SYSTEMS
 
 OUTPUT = ROOT / 'build/Embedded'
 LABELS = ['Legacy', 'AirPortOriginal', 'AirPort']
-VERSION = '1.2.0'
+VERSION = '1.2.1'
 ALIASES = {
     '__ZN26IOSkywalkEthernetInterface18getHardwareAddressEP12ether_addr_t':
         '__ZN26IOSkywalkEthernetInterface18getHardwareAddressEP10ether_addr',
@@ -131,6 +131,8 @@ def generate():
             if candidate.model.tables[cls] != plan.model.tables[cls]:
                 raise ValueError('Packet implementation differs across systems: ' + cls)
     OUTPUT.mkdir(parents=True, exist_ok=True)
+    from clm_policy import generate_policy
+    generate_policy(OUTPUT)
     images = [Image(IMAGES[label]) for label in LABELS]
     parsed = [parse(image) for image in images]
     exports = [{name: value for name, kind, _, _, value in symbols if kind & 0xf == 0xf}
