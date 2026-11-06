@@ -21,6 +21,19 @@ from pathlib import Path
 from build import CONFIGURATIONS, VERSION, package_name
 
 
+def prerelease_body(repository, commits):
+    repository_url = os.environ.get('GITHUB_SERVER_URL', 'https://github.com') + '/' + repository
+    changes = []
+    for commit in commits:
+        subject = commit['commit']['message'].splitlines()[0]
+        subject = re.sub(r'([\\`*_{}\[\]<>#|])', r'\\\1', subject)
+        changes.append(f'- [`{commit["sha"][:7]}`]({repository_url}/commit/{commit["sha"]}) {subject}')
+    return ('Universal native Skywalk development build for macOS Sonoma, Sequoia and Tahoe.\n\n'
+            'Keep native IOSkywalkFamily and IO80211Family enabled; remove old Skywalk Block/Exclude rules.\n'
+            f'Installation: [README]({repository_url}/blob/{os.environ["GITHUB_SHA"]}/README.en.md).\n\n' +
+            '\n'.join(changes) + '\n')
+
+
 def release_body():
     return '''一个 SimpleBCM.kext 支持 macOS Sonoma、Sequoia 和 Tahoe，通过 OpenCore 注入恢复 Broadcom Wi-Fi，使用系统原生 Skywalk，无需修改系统卷。
 
@@ -54,7 +67,7 @@ def main():
         raise SystemExit('Invalid repository name')
     if not re.fullmatch(r'[0-9a-fA-F]{40}', sha):
         raise SystemExit('Invalid commit SHA')
-    body = release_body() if args.channel == 'rel' else ''
+    body = release_body() if args.channel == 'rel' else None
     files = []
     for configuration in CONFIGURATIONS:
         name = package_name(configuration, args.channel, sha)
@@ -110,6 +123,8 @@ def main():
             request('PATCH', base + '/git/refs/tags/' + encoded, {'sha': sha, 'force': True})
         else:
             request('POST', base + '/git/refs', {'ref': 'refs/tags/' + tag, 'sha': sha})
+        commits = request('GET', base + f'/commits?sha={sha}&per_page=5')
+        body = prerelease_body(repository, commits)
         values = {'tag_name': tag, 'target_commitish': sha, 'name': tag, 'body': body,
                   'draft': False, 'prerelease': True, 'make_latest': 'false'}
         if current:
