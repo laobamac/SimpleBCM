@@ -13,6 +13,8 @@
 #include "UserClient.hpp"
 #include "HardwareIdentity.hpp"
 #include "RadioPolicy.hpp"
+#include "TahoeDMA.hpp"
+#include "AWDLCoexistence.hpp"
 #include <IOKit/IOLib.h>
 #include <IOKit/IOWorkLoop.h>
 #include <libkern/c++/OSData.h>
@@ -651,9 +653,15 @@ bool Bridge::prepareImage(LinkedImage &image, size_t index) {
         return false;
     KernelPatcher patcher(image);
     patchImage(patcher, index, image.address, image.payload->mappedSize);
+    if (index == 0 && !(__atomic_load_n(&state, __ATOMIC_ACQUIRE) & 0x80000000U) &&
+        !AWDLCoexistence::prepare(image))
+        reject("AWDLCoexistencePreparationFailed");
     if (index == 1 && !(__atomic_load_n(&state, __ATOMIC_ACQUIRE) & 0x80000000U) &&
         !RadioPolicy::prepare(image))
         reject("RadioPolicyPreparationFailed");
+    if (index == 1 && !(__atomic_load_n(&state, __ATOMIC_ACQUIRE) & 0x80000000U) &&
+        !TahoeDMA::prepare(image))
+        reject("TahoeDMAPreparationFailed");
     return !(__atomic_load_n(&state, __ATOMIC_ACQUIRE) & 0x80000000U);
 }
 
@@ -762,6 +770,8 @@ void Bridge::trackController(IOService *controller) {
 
 void Bridge::publish(IOService *service) {
     RadioPolicy::publish(service);
+    TahoeDMA::publish(service);
+    AWDLCoexistence::publish(service);
     service->setProperty("Status", __atomic_load_n(&failure, __ATOMIC_ACQUIRE));
     service->setProperty("PatchState", __atomic_load_n(&state, __ATOMIC_ACQUIRE), 32);
     service->setProperty("SupportedKernel", "23.x / 24.x / 25.x");

@@ -26,6 +26,9 @@
 		000000000000000000000160 = {isa = PBXBuildFile; fileRef = 000000000000000000000161; };
 		000000000000000000000170 = {isa = PBXBuildFile; fileRef = 000000000000000000000171; };
 		000000000000000000000190 = {isa = PBXBuildFile; fileRef = 000000000000000000000191; };
+		000000000000000000000200 = {isa = PBXBuildFile; fileRef = 000000000000000000000201; };
+		000000000000000000000203 = {isa = PBXBuildFile; fileRef = 000000000000000000000204; };
+		000000000000000000000210 = {isa = PBXBuildFile; fileRef = 000000000000000000000211; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -57,6 +60,11 @@
 		000000000000000000000173 = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = HardwareIdentity.hpp; sourceTree = "<group>"; };
 		000000000000000000000191 = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = RadioPolicy.cpp; sourceTree = "<group>"; };
 		000000000000000000000192 = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = RadioPolicy.hpp; sourceTree = "<group>"; };
+		000000000000000000000201 = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = TahoeDMA.cpp; sourceTree = "<group>"; };
+		000000000000000000000202 = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = TahoeDMA.hpp; sourceTree = "<group>"; };
+		000000000000000000000204 = {isa = PBXFileReference; lastKnownFileType = sourcecode.asm; path = build/Embedded/TahoeDMA.S; sourceTree = "<group>"; };
+		000000000000000000000211 = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = AWDLCoexistence.cpp; sourceTree = "<group>"; };
+		000000000000000000000212 = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = AWDLCoexistence.hpp; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXGroup section */
@@ -84,6 +92,10 @@
 				000000000000000000000173,
 				000000000000000000000191,
 				000000000000000000000192,
+				000000000000000000000201,
+				000000000000000000000202,
+				000000000000000000000211,
+				000000000000000000000212,
 				000000000000000000000078 /* Info.plist */,
 			);
 			path = SimpleBCM;
@@ -106,6 +118,7 @@
 				00000000000000000000007B /* Probe/main.mm */,
 				00000000000000000000012E,
 				00000000000000000000012F,
+				000000000000000000000204,
 				00000000000000000000008D /* Products */,
 			);
 			sourceTree = "<group>";
@@ -186,6 +199,9 @@
 				000000000000000000000160,
 				000000000000000000000170,
 				000000000000000000000190,
+				000000000000000000000200,
+				000000000000000000000203,
+				000000000000000000000210,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -210,6 +226,8 @@
 			outputPaths = (
 				"$(SRCROOT)/build/Embedded/Payloads.cpp",
 				"$(SRCROOT)/build/Embedded/Payloads.S",
+				"$(SRCROOT)/build/Embedded/TahoeDMA.S",
+				"$(SRCROOT)/build/Embedded/TahoeDMAData.hpp",
 			);
 			name = "Generate Payloads";
 			runOnlyForDeploymentPostprocessing = 0;

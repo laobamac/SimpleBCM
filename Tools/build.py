@@ -470,6 +470,7 @@ def verify(configuration, references):
               'relocationValidation': runs, 'sanitizers': ['AddressSanitizer', 'UndefinedBehaviorSanitizer'],
               'abiValidation': abi,
               'radioPolicyValidation': radio,
+              'tahoeDMA': json.loads((OUTPUT / 'TahoeDMA.json').read_text()),
               'radioPolicy': json.loads((OUTPUT / 'RadioPolicy.json').read_text()),
               'nativeABIValidation': native_abi,
               'baseAddEntries': len(fragment()['Kernel']['Add']), 'payloads': manifest['payloads'],
@@ -536,6 +537,7 @@ def package(configuration, channel='rel'):
             shutil.copy2(document, stage / 'Docs' / document.name)
         (extra / 'Validation.json').write_text(json.dumps(report, indent=2) + '\n')
         shutil.copy2(OUTPUT / 'RadioPolicy.json', extra / 'RadioPolicy.json')
+        shutil.copy2(OUTPUT / 'TahoeDMA.json', extra / 'TahoeDMA.json')
         save_plist(stage / 'config.fragment.plist', fragment())
         save_plist(extra / 'config.AirportBrcmFixup.fragment.plist', fragment(True))
         files = {str(p.relative_to(stage)): digest(p) for p in stage.rglob('*') if p.is_file()}
