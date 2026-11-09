@@ -23,6 +23,7 @@
 #include <kern/thread_call.h>
 #include <mach/thread_act.h>
 #include <mach-o/loader.h>
+#include <pexpert/pexpert.h>
 #include <sys/errno.h>
 #include <sys/systm.h>
 
@@ -30,6 +31,8 @@ namespace bcm {
 
 Counters counters {};
 static uint32_t state;
+static bool awdlCoexistenceEnabled;
+static bool tahoeDMAEnabled;
 static IOService *observedController;
 static const char *failure = "WaitingForDependencies";
 static IOSimpleLock *contextLock;
@@ -654,13 +657,13 @@ bool Bridge::prepareImage(LinkedImage &image, size_t index) {
     KernelPatcher patcher(image);
     patchImage(patcher, index, image.address, image.payload->mappedSize);
     if (index == 0 && !(__atomic_load_n(&state, __ATOMIC_ACQUIRE) & 0x80000000U) &&
-        !AWDLCoexistence::prepare(image))
+        !AWDLCoexistence::prepare(image, awdlCoexistenceEnabled))
         reject("AWDLCoexistencePreparationFailed");
     if (index == 1 && !(__atomic_load_n(&state, __ATOMIC_ACQUIRE) & 0x80000000U) &&
         !RadioPolicy::prepare(image))
         reject("RadioPolicyPreparationFailed");
     if (index == 1 && !(__atomic_load_n(&state, __ATOMIC_ACQUIRE) & 0x80000000U) &&
-        !TahoeDMA::prepare(image))
+        !TahoeDMA::prepare(image, tahoeDMAEnabled))
         reject("TahoeDMAPreparationFailed");
     return !(__atomic_load_n(&state, __ATOMIC_ACQUIRE) & 0x80000000U);
 }
@@ -742,6 +745,9 @@ void Bridge::patchImage(KernelPatcher &patcher, size_t index, mach_vm_address_t 
 }
 
 void Bridge::initialize() {
+    int value = 0;
+    awdlCoexistenceEnabled = PE_parse_boot_argn("-sbcmawdlcc", &value, sizeof(value));
+    tahoeDMAEnabled = PE_parse_boot_argn("-sbcmdma", &value, sizeof(value));
     activeABI = userABIForKernel(static_cast<uint32_t>(getKernelVersion()));
     if (!activeABI) {
         reject("UnsupportedKernel");

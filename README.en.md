@@ -32,6 +32,17 @@ Supports macOS Sonoma 14, Sequoia 15 and Tahoe 26 without restricting minor vers
 
 If AirportBrcmFixup is needed, add Lilu, AirportBrcmFixup and AirPortBrcmNIC_Injector using `Extra/config.AirportBrcmFixup.fragment.plist`.
 
+## Boot arguments
+
+The following features are disabled by default and apply only to macOS Tahoe (Darwin 25). They can be enabled independently:
+
+| Argument | Feature |
+| --- | --- |
+| `-sbcmawdlcc` | Enable the AWDL channel coexistence fix |
+| `-sbcmdma` | Enable Tahoe DMA optimization |
+
+Append the desired arguments to OpenCore's `NVRAM → Add → 7C436110-AB2A-4BBB-A880-FE41995C9F82 → boot-args`, preserving existing arguments and separating them with spaces, then reboot. Remove the corresponding argument and reboot to disable a feature. Debug and Release use the same defaults; neither modification applies to Sonoma or Sequoia. `-simplebcmoff` still disables the entire driver.
+
 ## Debugging
 
 Use the DEBUG package. Run from the extracted package directory:

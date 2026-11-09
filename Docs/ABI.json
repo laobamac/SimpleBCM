@@ -72,10 +72,6 @@
           "symbol": "__ZN16IO80211Interface25updateCountryCodePropertyEb"
         },
         {
-          "address": "0x200c2",
-          "symbol": "__ZN22IO80211AWDLPeerManager26selectChannelsToUseForAWDLEv"
-        },
-        {
           "address": "0x78617",
           "symbol": "__ZL12getPowersaveP17IO80211ControllerP16IO80211InterfaceP23IO80211VirtualInterfaceP21IO80211InfraInterfaceP13apple80211reqb+0x0"
         },

@@ -32,6 +32,17 @@ SimpleBCM 通过 OpenCore 注入恢复 macOS Sonoma、Sequoia 和 Tahoe 的 Broa
 
 需要 AirportBrcmFixup 时，按 `Extra/config.AirportBrcmFixup.fragment.plist` 添加 Lilu、AirportBrcmFixup 和 AirPortBrcmNIC_Injector。
 
+## 启动参数
+
+以下功能默认关闭，仅在 macOS Tahoe（Darwin 25）生效，可分别启用：
+
+| 参数 | 功能 |
+| --- | --- |
+| `-sbcmawdlcc` | 启用 AWDL 信道共存修正 |
+| `-sbcmdma` | 启用 Tahoe DMA 优化 |
+
+在 OpenCore 的 `NVRAM → Add → 7C436110-AB2A-4BBB-A880-FE41995C9F82 → boot-args` 中追加所需参数，保留原有参数并用空格分隔；重启后生效。移除对应参数并重启即可关闭。两项互不依赖，Debug 和 Release 的默认行为相同；Sonoma、Sequoia 不应用这两项修改。`-simplebcmoff` 仍可禁用整个驱动。
+
 ## 调试
 
 使用 DEBUG 包，在解压目录运行：

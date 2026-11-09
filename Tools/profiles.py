@@ -23,6 +23,7 @@ IMAGES = {
     "AirPortOriginal": BINARY / "IO80211FamilyLegacy-v1.0.0/IO80211FamilyLegacy.kext/Contents/PlugIns/AirPortBrcmNIC.kext/Contents/MacOS/AirPortBrcmNIC",
     "AirPort": BINARY / "AirPortBrcmNIC-Tahoe-v1.0.0/AirPortBrcmNIC-Tahoe.kext/Contents/MacOS/AirPortBrcmNIC",
 }
+AWDL_SELECT_SYMBOL = "__ZN22IO80211AWDLPeerManager26selectChannelsToUseForAWDLEv"
 SYMBOLS = {
     "Legacy": [
         "__ZN16IO80211Interface13newUserClientEP4taskPvjP12OSDictionaryPP12IOUserClient",
@@ -41,7 +42,7 @@ SYMBOLS = {
         "__ZN16IO80211Interface14performCommandEP19IONetworkControllermPvS2_",
         "__ZN17IO80211Controller22apple80211RequestIoctlEjiP16IO80211InterfacePv",
         "__ZN16IO80211Interface25updateCountryCodePropertyEb",
-        "__ZN22IO80211AWDLPeerManager26selectChannelsToUseForAWDLEv",
+        AWDL_SELECT_SYMBOL,
     ],
     "AirPort": ["_bcm_decode_anqp_nai_realm_print", "__dma_detach", "_dma64_txfast", "__dma_rxfill", "__dma_getnextrxp",
                 "__ZN15AirPort_BrcmNIC9getLOCALEEP8OSObjectP22apple80211_locale_data",
@@ -51,7 +52,7 @@ SYMBOLS["AirPortOriginal"] = SYMBOLS["AirPort"]
 HARDWARE_VERSION_SYMBOL = "__ZN15AirPort_BrcmNIC19getHARDWARE_VERSIONEP8OSObjectP23apple80211_version_data"
 ROUTE_SYMBOLS = {
     "Legacy": SYMBOLS["Legacy"][:5] + ["__ZN16IO80211Interface25updateCountryCodePropertyEb",
-                                       "__ZN22IO80211AWDLPeerManager26selectChannelsToUseForAWDLEv"],
+                                       AWDL_SELECT_SYMBOL],
     "AirPort": [HARDWARE_VERSION_SYMBOL, "__ZN15AirPort_BrcmNIC9getLOCALEEP8OSObjectP22apple80211_locale_data"],
 }
 ROUTE_SYMBOLS["AirPortOriginal"] = ROUTE_SYMBOLS["AirPort"]
@@ -93,6 +94,8 @@ def main():
         relocs = relocations(image)
         guards = []
         for name in SYMBOLS[label]:
+            if name == AWDL_SELECT_SYMBOL:
+                continue
             address = image.symbols[name]
             guards.append((address, name))
         scalar = []

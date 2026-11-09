@@ -60,7 +60,7 @@ static Ring *rings;
 static const uint32_t *ringCount;
 static uintptr_t imageBase;
 static bool installed;
-static const char *status = "NotRequired";
+static const char *status = "NotPrepared";
 static struct {
     uint64_t txPackets;
     uint64_t txBytes;
@@ -219,9 +219,15 @@ extern "C" void *bcmTahoeRxCopy(void *di, void *packet, uint32_t index,
     return packet;
 }
 
-bool TahoeDMA::prepare(LinkedImage &image) {
-    if (getKernelVersion() != 25)
+bool TahoeDMA::prepare(LinkedImage &image, bool enabled) {
+    if (getKernelVersion() != 25) {
+        status = "NotRequired";
         return true;
+    }
+    if (!enabled) {
+        status = "Disabled";
+        return true;
+    }
     if (installed)
         return false;
     status = "ValidationFailed";

@@ -16,7 +16,7 @@ namespace bcm {
 
 class TahoeDMA {
 public:
-    static bool prepare(LinkedImage &image);
+    static bool prepare(LinkedImage &image, bool enabled);
     static void publish(IOService *service);
 };
 
