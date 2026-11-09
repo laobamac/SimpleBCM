@@ -34,6 +34,8 @@ SimpleBCM 通过 OpenCore 注入恢复 macOS Sonoma、Sequoia 和 Tahoe 的 Broa
 
 ## 启动参数
 
+`sbcmdelay=X`：服务启动后延迟 `X` 毫秒加载内嵌驱动，如 `sbcmdelay=10000` 为 10 秒。支持三套系统，不设置或设为 `0` 时不延迟。载荷准备和注册仍在早期完成。
+
 以下功能默认关闭，仅在 macOS Tahoe（Darwin 25）生效，可分别启用：
 
 | 参数 | 功能 |

@@ -34,6 +34,8 @@ If AirportBrcmFixup is needed, add Lilu, AirportBrcmFixup and AirPortBrcmNIC_Inj
 
 ## Boot arguments
 
+`sbcmdelay=X`: load embedded drivers `X` milliseconds after service startup; `sbcmdelay=10000` means 10 seconds. Supports all three systems. Omit it or use `0` for no delay. Payload preparation and registration still run early.
+
 The following features are disabled by default and apply only to macOS Tahoe (Darwin 25). They can be enabled independently:
 
 | Argument | Feature |
