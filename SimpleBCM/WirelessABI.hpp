@@ -31,6 +31,9 @@ constexpr uint32_t DriverAvailableEvent = 0x37;
 constexpr size_t LegacyDriverAvailableSize = 0xB8;
 constexpr size_t NativeDriverAvailableSize = 0xF8;
 constexpr size_t PowerDataSize = 0x18;
+constexpr uint32_t PowerRequest = 19;
+constexpr uint32_t LegacyDriverSetCommand = 0x803069C8;
+constexpr uint32_t LegacyDriverGetCommand = 0xC03069C9;
 constexpr uint32_t PowerStateAvailabilityReason = 0xE0821803;
 constexpr uint32_t AssociationDoneEvent = 9;
 constexpr size_t LegacyCapabilitySize = 12;
@@ -38,6 +41,19 @@ constexpr size_t ScanCompletionCapabilityByte = 5;
 constexpr uint8_t ScanCompletionCapabilityMask = 0x40;
 constexpr uint32_t AssociateRequest = 20;
 constexpr size_t LegacyAssociateSize = 0x224;
+constexpr uint32_t IBSSModeRequest = 24;
+constexpr uint32_t HostAPModeRequest = 25;
+constexpr int32_t NetworkModeStart = 1;
+constexpr int32_t NetworkModeStop = 2;
+constexpr size_t LegacyNetworkDataSize = 0x5DC;
+constexpr size_t LegacyNetworkKeyOffset = 0x3C;
+constexpr size_t NetworkKeySize = 0x94;
+constexpr size_t LegacyNetworkRSNOffset = 0xD4;
+constexpr size_t LegacyNetworkRSNCapacity = 0x100;
+constexpr size_t NativeNetworkRSNCapacity = 0x200;
+constexpr size_t NetworkIECapacity = 0x400;
+constexpr uint32_t LegacyNetworkWPA2PSK = 0x400;
+constexpr uint32_t LegacyNetworkPSKCipher = 10;
 constexpr uint32_t RoamProfileRequest = 216;
 constexpr size_t NativeRoamProfileSize = 0x180;
 constexpr size_t NativeRoamBandSize = 0x80;
@@ -50,6 +66,7 @@ constexpr size_t LegacyScanIECapacity = 0x400;
 enum class AirPortBackend : uint8_t { Original, Tahoe };
 enum class AssociateLayout : uint8_t { Legacy, Extended };
 enum class JoinEventPolicy : uint8_t { Passthrough, Sequoia, Tahoe };
+enum class NetworkDataResult : uint8_t { Valid, Invalid, Unsupported };
 
 struct UserABI {
     uint32_t kernel;
@@ -66,17 +83,19 @@ struct UserABI {
     AirPortBackend backend;
     AssociateLayout associateLayout;
     JoinEventPolicy joinEventPolicy;
+    size_t networkDataSize;
+    bool extendedNetworkAuth;
 };
 
 constexpr UserABI SonomaABI {23, "Sonoma", 0x4CC, 16, 0x358, 0, 0,
     LegacyScanMultipleSize, LegacyRoamBandSize, LegacyDriverAvailableSize, 7,
-    AirPortBackend::Original, AssociateLayout::Legacy, JoinEventPolicy::Passthrough};
+    AirPortBackend::Original, AssociateLayout::Legacy, JoinEventPolicy::Passthrough, 0x6DC, false};
 constexpr UserABI SequoiaABI {24, "Sequoia", 0x8D8, 19, 0x384, 0x1CC, 0,
     NativeScanMultipleSize, NativeRoamProfileSize, NativeDriverAvailableSize, 9,
-    AirPortBackend::Original, AssociateLayout::Extended, JoinEventPolicy::Sequoia};
+    AirPortBackend::Original, AssociateLayout::Extended, JoinEventPolicy::Sequoia, 0x6E4, true};
 constexpr UserABI TahoeABI {25, "Tahoe", 0x8E0, 21, 0x38C, 0x1D4, 0x234,
     NativeScanMultipleSize, NativeRoamProfileSize, NativeDriverAvailableSize, 9,
-    AirPortBackend::Tahoe, AssociateLayout::Extended, JoinEventPolicy::Tahoe};
+    AirPortBackend::Tahoe, AssociateLayout::Extended, JoinEventPolicy::Tahoe, 0x6E8, true};
 
 inline const UserABI *userABIForKernel(uint32_t kernel) {
     return kernel == 23 ? &SonomaABI : kernel == 24 ? &SequoiaABI : kernel == 25 ? &TahoeABI : nullptr;
@@ -215,6 +234,176 @@ inline uint32_t readUInt32(const uint8_t *buffer) {
 inline void writeUInt32(uint8_t *buffer, uint32_t value) {
     for (size_t index = 0; index < sizeof(value); ++index)
         buffer[index] = static_cast<uint8_t>(value >> (index * 8));
+}
+
+inline bool isNetworkModeRequest(int32_t request) {
+    return request == static_cast<int32_t>(IBSSModeRequest) || request == static_cast<int32_t>(HostAPModeRequest);
+}
+
+inline bool isNetworkPowerOff(const uint8_t *buffer, size_t length) {
+    if (!buffer || length != PowerDataSize || readUInt32(buffer) != 1)
+        return false;
+    const auto radios = readUInt32(buffer + 4);
+    if (!radios || radios > 4)
+        return false;
+    for (size_t index = 0; index < radios; ++index) {
+        if (readUInt32(buffer + 8 + index * 4))
+            return false;
+    }
+    return true;
+}
+
+inline bool preserveNetworkModePower(bool active, bool systemTransition,
+                                     const uint8_t *buffer, size_t length) {
+    return active && !systemTransition && isNetworkPowerOff(buffer, length);
+}
+
+inline bool isNetworkPowerOn(const uint8_t *buffer, size_t length) {
+    if (!buffer || length != PowerDataSize || readUInt32(buffer) != 1)
+        return false;
+    const auto radios = readUInt32(buffer + 4);
+    if (!radios || radios > 4)
+        return false;
+    bool on = false;
+    for (size_t index = 0; index < radios; ++index) {
+        const auto value = readUInt32(buffer + 8 + index * 4);
+        if (value > 3)
+            return false;
+        on |= value != 0;
+    }
+    return on;
+}
+
+inline bool allowLegacyNetworkMode(const Request &request) {
+    if (!isNetworkModeRequest(request.type))
+        return false;
+    if (request.value == NetworkModeStop)
+        return request.length == 0;
+    return request.value == NetworkModeStart && request.length == LegacyNetworkDataSize && request.data;
+}
+
+inline bool isLegacyHostAPWPA2(const Request &request, const uint8_t *buffer, size_t capacity) {
+    return request.type == HostAPModeRequest && request.value == NetworkModeStart &&
+        request.length == LegacyNetworkDataSize && buffer && capacity >= LegacyNetworkDataSize &&
+        buffer[6] == 1 && !buffer[7] && !buffer[8] && buffer[9] == 4 &&
+        readUInt32(buffer + LegacyNetworkKeyOffset) == 1 &&
+        readUInt32(buffer + LegacyNetworkKeyOffset + 4) >= 8 &&
+        readUInt32(buffer + LegacyNetworkKeyOffset + 4) <= 64 &&
+        readUInt32(buffer + LegacyNetworkKeyOffset + 8) == LegacyNetworkPSKCipher;
+}
+
+inline uint32_t networkSSIDCipher(bool secured, uint32_t original) {
+    return original | (secured ? 4U : 0U);
+}
+
+inline bool isNetworkWPA2PSK(const uint8_t *ie, size_t capacity) {
+    static const uint8_t body[] = {1, 0, 0, 15, 172, 4, 1, 0, 0, 15, 172, 4,
+                                   1, 0, 0, 15, 172, 2};
+    if (!ie || capacity < sizeof(body) + 2 || ie[0] != 48 ||
+        (ie[1] != sizeof(body) && ie[1] != sizeof(body) + 2) || size_t(ie[1]) + 2 > capacity)
+        return false;
+    for (size_t index = 0; index < sizeof(body); ++index) {
+        if (ie[index + 2] != body[index])
+            return false;
+    }
+    return ie[1] == sizeof(body) || !(ie[sizeof(body) + 2] & 0xC0);
+}
+
+inline bool isNetworkPassphrase(const uint8_t *bytes, size_t length) {
+    if (!bytes || length < 8 || length > 64)
+        return false;
+    for (size_t index = 0; index < length; ++index) {
+        const auto byte = bytes[index];
+        if (!byte || (length == 64 && !((byte >= '0' && byte <= '9') ||
+            (byte >= 'a' && byte <= 'f') || (byte >= 'A' && byte <= 'F'))))
+            return false;
+    }
+    return true;
+}
+
+inline NetworkDataResult prepareNetworkMode(Request &request, uint8_t *buffer, size_t capacity,
+                                           const UserABI &abi) {
+    if (!isNetworkModeRequest(request.type))
+        return NetworkDataResult::Invalid;
+    if (request.value == NetworkModeStop)
+        return request.length == 0 ? NetworkDataResult::Valid : NetworkDataResult::Invalid;
+    if (request.value != NetworkModeStart || !buffer || !request.data ||
+        capacity < abi.networkDataSize || request.length != abi.networkDataSize || readUInt32(buffer) != 1)
+        return NetworkDataResult::Invalid;
+    const size_t shift = abi.extendedNetworkAuth ? 4 : 0;
+    const size_t key = LegacyNetworkKeyOffset + shift;
+    const size_t rsn = LegacyNetworkRSNOffset + shift;
+    const size_t nativeTail = rsn + NativeNetworkRSNCapacity;
+    const size_t legacyTail = LegacyNetworkRSNOffset + LegacyNetworkRSNCapacity;
+    const size_t tailSize = LegacyNetworkDataSize - legacyTail;
+    if (abi.networkDataSize < nativeTail + tailSize || readUInt32(buffer + 0x18 + shift) > 32 ||
+        readUInt32(buffer + key) > 1 || readUInt32(buffer + key + 4) > 64 ||
+        readUInt32(buffer + key + 0x50) > 8 || readUInt32(buffer + key + 0x64) > 16 ||
+        readUInt32(buffer + key + 0x78) > 16 || readUInt32(buffer + nativeTail + 4) > NetworkIECapacity)
+        return NetworkDataResult::Invalid;
+    uint32_t lower = uint32_t(buffer[6]) | uint32_t(buffer[7]) << 8;
+    uint32_t upper = uint32_t(buffer[8]) | uint32_t(buffer[9]) << 8;
+    if (shift) {
+        lower = readUInt32(buffer + 8);
+        upper = readUInt32(buffer + 12);
+        if (lower > UINT16_MAX || upper > UINT16_MAX)
+            return NetworkDataResult::Invalid;
+    }
+    if (buffer[rsn] && size_t(buffer[rsn + 1]) + 2 > LegacyNetworkRSNCapacity)
+        return NetworkDataResult::Unsupported;
+    for (size_t offset = rsn + LegacyNetworkRSNCapacity; offset < nativeTail; ++offset) {
+        if (buffer[offset])
+            return NetworkDataResult::Unsupported;
+    }
+    for (size_t offset = nativeTail + tailSize; offset < abi.networkDataSize; ++offset) {
+        if (buffer[offset])
+            return NetworkDataResult::Unsupported;
+    }
+    const bool hostAP = request.type == HostAPModeRequest;
+    const auto keyLength = readUInt32(buffer + key + 4);
+    const auto cipher = readUInt32(buffer + key + 8);
+    bool emptyRSN = true;
+    for (size_t offset = 0; offset < LegacyNetworkRSNCapacity; ++offset)
+        emptyRSN &= buffer[rsn + offset] == 0;
+    const bool passphrase = hostAP && upper == 8 && cipher == 0 &&
+        isNetworkPassphrase(buffer + key + 16, keyLength) &&
+        (emptyRSN || isNetworkWPA2PSK(buffer + rsn, NativeNetworkRSNCapacity));
+    const bool pmk = hostAP && upper == 8 && cipher == 6 && keyLength == 32 &&
+        isNetworkWPA2PSK(buffer + rsn, NativeNetworkRSNCapacity);
+    const bool secured = passphrase || pmk;
+    if (hostAP && (lower != 1 || (!secured && (upper || keyLength || cipher || !emptyRSN))))
+        return NetworkDataResult::Unsupported;
+    if (shift) {
+        for (size_t offset = 12; offset < legacyTail; ++offset)
+            buffer[offset] = buffer[offset + shift];
+        buffer[6] = static_cast<uint8_t>(lower);
+        buffer[7] = static_cast<uint8_t>(lower >> 8);
+        buffer[8] = static_cast<uint8_t>(upper);
+        buffer[9] = static_cast<uint8_t>(upper >> 8);
+        buffer[10] = buffer[11] = 0;
+    }
+    for (size_t offset = 0; offset < tailSize; ++offset)
+        buffer[legacyTail + offset] = buffer[nativeTail + offset];
+    if (pmk) {
+        static const char hex[] = "0123456789abcdef";
+        auto material = buffer + LegacyNetworkKeyOffset + 16;
+        for (size_t offset = 32; offset; --offset) {
+            const auto byte = material[offset - 1];
+            material[(offset - 1) * 2] = hex[byte >> 4];
+            material[(offset - 1) * 2 + 1] = hex[byte & 15];
+        }
+        writeUInt32(buffer + LegacyNetworkKeyOffset + 4, 64);
+    }
+    if (secured) {
+        buffer[8] = static_cast<uint8_t>(LegacyNetworkWPA2PSK);
+        buffer[9] = static_cast<uint8_t>(LegacyNetworkWPA2PSK >> 8);
+        writeUInt32(buffer + LegacyNetworkKeyOffset, 1);
+        writeUInt32(buffer + LegacyNetworkKeyOffset + 8, LegacyNetworkPSKCipher);
+    }
+    for (size_t offset = LegacyNetworkDataSize; offset < abi.networkDataSize; ++offset)
+        buffer[offset] = 0;
+    request.length = LegacyNetworkDataSize;
+    return NetworkDataResult::Valid;
 }
 
 inline bool prepareScanMultiple(Request &request, uint8_t *buffer, size_t capacity, const UserABI &abi) {

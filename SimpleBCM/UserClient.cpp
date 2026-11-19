@@ -285,6 +285,7 @@ IOReturn BCM80211UserClient::runCommand(IOExternalMethodArguments *arguments, si
     const bool capabilities = get && request == bcm::CardCapabilitiesRequest &&
         outputSize == abi.capabilitySize;
     const bool associate = set && request == bcm::AssociateRequest;
+    const bool networkMode = set && bcm::isNetworkModeRequest(request);
     const bool roamProfiles = request == bcm::RoamProfileRequest && abi.roamProfileSize == bcm::NativeRoamProfileSize;
     bool outputPrepared = false;
     __atomic_fetch_add(&bcm::counters.commands, 1ULL, __ATOMIC_RELAXED);
@@ -325,6 +326,13 @@ IOReturn BCM80211UserClient::runCommand(IOExternalMethodArguments *arguments, si
         goto done;
     if (associate && !bcm::prepareAssociate(legacy.request, shadow, capacity, abi))
         goto done;
+    if (networkMode) {
+        const auto converted = bcm::prepareNetworkMode(legacy.request, shadow, capacity, abi);
+        if (converted != bcm::NetworkDataResult::Valid) {
+            result = converted == bcm::NetworkDataResult::Unsupported ? kIOReturnUnsupported : kIOReturnBadArgument;
+            goto done;
+        }
+    }
     if (set && abi.filterMonitorEvents && static_cast<uint32_t>(request) == abi.filterMonitorEvents) {
         if (legacy.request.length != sizeof(bcm::EventFilter) || header->length < sizeof(bcm::EventFilter))
             goto done;
