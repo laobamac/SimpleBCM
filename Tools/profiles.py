@@ -26,6 +26,7 @@ IMAGES = {
 }
 AWDL_SELECT_SYMBOL = "__ZN22IO80211AWDLPeerManager26selectChannelsToUseForAWDLEv"
 NETWORK_MODE_SYMBOL = "__ZL22setIBSS_Or_HostAP_ModeP17IO80211ControllerP16IO80211InterfaceP23IO80211VirtualInterfaceP21IO80211InfraInterfaceP13apple80211reqb"
+NETWORK_AWDL_FLAGS_SYMBOL = "__ZN23IO80211VirtualInterface18handleSIOCSIFFLAGSEPKc"
 NETWORK_DISABLE_SYMBOL = "__ZN17IO80211Controller7disableEP18IONetworkInterface"
 SYSTEM_POWER_CHANGE_SYMBOL = "__ZN17IO80211Controller16powerChangeGatedEP8OSObjectPvS2_S2_S2_"
 HOST_AP_SYMBOL = "__ZN15AirPort_BrcmNIC15setHOST_AP_MODEEP8OSObjectP23apple80211_network_data"
@@ -58,6 +59,7 @@ SYMBOLS = {
         NETWORK_MODE_SYMBOL,
         NETWORK_DISABLE_SYMBOL,
         SYSTEM_POWER_CHANGE_SYMBOL,
+        NETWORK_AWDL_FLAGS_SYMBOL,
     ],
     "AirPort": ["_bcm_decode_anqp_nai_realm_print", "__dma_detach", "_dma64_txfast", "__dma_rxfill", "__dma_getnextrxp",
                 "__ZN15AirPort_BrcmNIC9getLOCALEEP8OSObjectP22apple80211_locale_data",

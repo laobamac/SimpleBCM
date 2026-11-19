@@ -84,6 +84,10 @@
           "symbol": "__ZN17IO80211Controller16powerChangeGatedEP8OSObjectPvS2_S2_S2_"
         },
         {
+          "address": "0xb21f4",
+          "symbol": "__ZN23IO80211VirtualInterface18handleSIOCSIFFLAGSEPKc"
+        },
+        {
           "address": "0x8f4b9",
           "symbol": "HostAP network-disable power request"
         },

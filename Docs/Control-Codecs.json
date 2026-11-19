@@ -558,6 +558,18 @@
         "invalidAddress": "Reject zero or multicast BSSID and non-primary BSS without writing hardware",
         "failure": "Return synchronization errors and retry while active; preserve accepted asynchronous HostAP startup"
       },
+      "AWDLRestoration": {
+        "scope": "Successful bridged HostAP stop after an active hotspot",
+        "handler": "__ZN23IO80211VirtualInterface18handleSIOCSIFFLAGSEPKc",
+        "handlerAddress": "0xb21f4",
+        "behavior": "Cycle IFF_UP through the original flags handler, restoring controller, BPF queues and peer-manager state",
+        "ownership": "Same-controller virtual interface; BSD ifnet softc must match the IOService",
+        "scheduling": "Existing periodic status update under the controller workloop after radio recovery",
+        "radioUpOffset": 32,
+        "hardwareOffOffset": 33,
+        "guards": "Skip active AP, inactive controller, system power transitions and down radio; preserve disabled AWDL interfaces",
+        "cancellation": "New network-mode start or explicit radio off; restore pending work if dispatch fails"
+      },
       "unsupportedProfiles": "Reject before mutation; no implicit open-network fallback",
       "explicitOpen": "Preserved; no AES or PMK installation",
       "IBSS": "Layout conversion only",

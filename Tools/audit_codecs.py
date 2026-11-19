@@ -14,7 +14,7 @@ import struct
 from pathlib import Path
 
 from macho import Image
-from profiles import IMAGES, ROOT, SCALAR_GET_REQUESTS, NETWORK_MODE_SYMBOL, NETWORK_CIPHER_SYMBOL, NETWORK_IOVAR_SYMBOL, NETWORK_FIRMWARE_SYMBOL, NETWORK_MAC_SYMBOL, relocations, network_power_sites, network_cipher_site, network_ssid_cipher_site
+from profiles import IMAGES, ROOT, SCALAR_GET_REQUESTS, NETWORK_MODE_SYMBOL, NETWORK_CIPHER_SYMBOL, NETWORK_IOVAR_SYMBOL, NETWORK_FIRMWARE_SYMBOL, NETWORK_MAC_SYMBOL, NETWORK_AWDL_FLAGS_SYMBOL, relocations, network_power_sites, network_cipher_site, network_ssid_cipher_site
 
 
 def audit_native_network_modes():
@@ -61,6 +61,22 @@ def audit_native_network_modes():
 
 def audit_network_security():
     from native_abi import Mach, insns
+
+    legacy = Mach(IMAGES['Legacy'])
+    try:
+        flags_address, data = legacy.funcbytes(NETWORK_AWDL_FLAGS_SYMBOL)
+        assert len(data) == 336
+        rows = [text for _, _, text, _ in insns(data, flags_address)]
+        for pattern in (r'testb\s+\$1,\s*%r12b', r'testb\s+\$64,\s*%r12b',
+                        r'callq\s+\*3336\(%rax\)', r'callq\s+\*3344\(%rax\)'):
+            assert any(re.fullmatch(pattern, text) for text in rows)
+        calls = [address + 5 + struct.unpack_from('<i', raw, 1)[0]
+                 for address, _, _, raw in insns(data, flags_address) if len(raw) == 5 and raw[0] == 0xE8]
+        for name in ('__ZN23IO80211VirtualInterface24configureBpfOutputQueuesEb',
+                     '__ZN18IO80211PeerManager7disableEPKc', '__ZN18IO80211PeerManager6enableEPKc'):
+            assert legacy.names[name][4] in calls
+    finally:
+        legacy.close()
 
     consumers = {}
     for label in ('AirPortOriginal', 'AirPort'):
@@ -110,6 +126,12 @@ def audit_network_security():
                 assert any(re.fullmatch(pattern, text) for text in rows)
             bssid, data = binary.funcbytes('_wlc_set_bssid')
             assert any(re.fullmatch(r'leaq\s+232\(%rbx\),\s*%rdx', text) for _, _, text, _ in insns(data, bssid))
+            up, data = binary.funcbytes('_wlc_up')
+            rows = [text for _, _, text, _ in insns(data, up)]
+            for pattern in (r'movb\s+\$1,\s*32\(%rax\)', r'cmpb\s+\$0,\s*33\(%rax\)'):
+                assert any(re.fullmatch(pattern, text) for text in rows)
+            down, data = binary.funcbytes('_wlc_down')
+            assert any(re.fullmatch(r'movb\s+\$0,\s*32\(%rax\)', text) for _, _, text, _ in insns(data, down))
             consumers[label]['MACValidator'] = hex(setter)
             consumers[label]['receiveMACSetter'] = hex(ra)
             consumers[label]['BSSIDSetter'] = hex(bssid)
@@ -141,6 +163,14 @@ def audit_network_security():
                                      'powerScope': 'Skip inactive controllers, sleeping/power-transition devices and down AP BSS configurations',
                                      'invalidAddress': 'Reject zero or multicast BSSID and non-primary BSS without writing hardware',
                                      'failure': 'Return synchronization errors and retry while active; preserve accepted asynchronous HostAP startup'},
+            'AWDLRestoration': {'scope': 'Successful bridged HostAP stop after an active hotspot',
+                                'handler': NETWORK_AWDL_FLAGS_SYMBOL, 'handlerAddress': hex(flags_address),
+                                'behavior': 'Cycle IFF_UP through the original flags handler, restoring controller, BPF queues and peer-manager state',
+                                'ownership': 'Same-controller virtual interface; BSD ifnet softc must match the IOService',
+                                'scheduling': 'Existing periodic status update under the controller workloop after radio recovery',
+                                'radioUpOffset': 32, 'hardwareOffOffset': 33,
+                                'guards': 'Skip active AP, inactive controller, system power transitions and down radio; preserve disabled AWDL interfaces',
+                                'cancellation': 'New network-mode start or explicit radio off; restore pending work if dispatch fails'},
             'unsupportedProfiles': 'Reject before mutation; no implicit open-network fallback',
             'explicitOpen': 'Preserved; no AES or PMK installation', 'IBSS': 'Layout conversion only',
             'consumers': consumers,

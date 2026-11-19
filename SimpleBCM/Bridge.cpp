@@ -24,6 +24,8 @@
 #include <kern/thread_call.h>
 #include <mach/thread_act.h>
 #include <mach-o/loader.h>
+#include <net/if.h>
+#include <net/kpi_interface.h>
 #include <pexpert/pexpert.h>
 #include <sys/errno.h>
 #include <sys/systm.h>
@@ -82,6 +84,8 @@ using PostMessage = IOReturn (*)(IOService *, uint32_t, void *, size_t);
 using Ioctl = int (*)(IOService *, IOService *, IOService *, IOService *, void *);
 using Controller = IOService *(*)(IOService *);
 using BSDName = const char *(*)(IOService *);
+using InterfaceFlags = void (*)(IOService *, const char *);
+static InterfaceFlags updateVirtualFlags;
 using PerformCommand = int (*)(IOService *, IOService *, unsigned long, void *, void *);
 
 static NewClient originalClassicClient;
@@ -387,6 +391,62 @@ static IOReturn maintainNetworkMAC(OSObject *owner, void *, void *, void *, void
         !memcmp(configuration + 232, configuration + 238, 6))
         return kIOReturnSuccess;
     return synchronizeNetworkMAC(controller) ? kIOReturnIOError : kIOReturnSuccess;
+}
+
+static IOReturn restoreNetworkAWDL(OSObject *owner, void *, void *, void *, void *) {
+    auto controller = static_cast<IOService *>(owner);
+    if (controller->isInactive() || controller->getProperty("SimpleBCMHostAPRestoreAWDL") != kOSBooleanTrue ||
+        controller->getProperty("SimpleBCMHostAPActive") == kOSBooleanTrue)
+        return kIOReturnSuccess;
+    const auto bytes = reinterpret_cast<const uint8_t *>(controller);
+    if (__atomic_load_n(bytes + LegacySystemPowerTransitionOffset, __ATOMIC_ACQUIRE) ||
+        __atomic_load_n(bytes + 6816, __ATOMIC_ACQUIRE) ||
+        __atomic_load_n(reinterpret_cast<const uint64_t *>(bytes + 6800), __ATOMIC_ACQUIRE) != 2)
+        return kIOReturnSuccess;
+    void *wlc;
+    memcpy(&wlc, bytes + 2576, sizeof(wlc));
+    if (!wlc)
+        return kIOReturnSuccess;
+    const auto configuration = static_cast<const uint8_t *>(firmwareBSS(wlc, nullptr));
+    void *pub;
+    memcpy(&pub, wlc, sizeof(pub));
+    if (!configuration || configuration[10] || !pub || !static_cast<const uint8_t *>(pub)[32] ||
+        static_cast<const uint8_t *>(pub)[33])
+        return kIOReturnSuccess;
+    auto iterator = controller->getClientIterator();
+    if (!iterator)
+        return kIOReturnSuccess;
+    IOReturn result = kIOReturnNotReady;
+    while (auto object = iterator->getNextObject()) {
+        auto interface = OSDynamicCast(IOService, object);
+        Endpoint endpoint {};
+        if (!interface || !interface->metaCast("AirPort_BrcmNIC_P2PInterface") || interface->isInactive() ||
+            !Bridge::identify(interface, InterfaceKind::Virtual, endpoint) || endpoint.controller != controller ||
+            strncmp(endpoint.name, "awdl", 4))
+            continue;
+        ifnet_t network = nullptr;
+        if (ifnet_find_by_name(endpoint.name, &network) || !network)
+            continue;
+        if (ifnet_softc(network) == interface) {
+            result = kIOReturnSuccess;
+            if (ifnet_flags(network) & IFF_UP) {
+                const auto down = ifnet_set_flags(network, 0, IFF_UP);
+                if (!down)
+                    updateVirtualFlags(interface, "HostAP stop");
+                const auto up = ifnet_set_flags(network, IFF_UP, IFF_UP);
+                if (!up)
+                    updateVirtualFlags(interface, "HostAP stop");
+                if (down || up || (ifnet_flags(network) & (IFF_UP | IFF_RUNNING)) != (IFF_UP | IFF_RUNNING))
+                    result = kIOReturnIOError;
+            }
+            if (result == kIOReturnSuccess)
+                controller->setProperty("SimpleBCMHostAPRestoreAWDL", false);
+        }
+        ifnet_release(network);
+        break;
+    }
+    iterator->release();
+    return result;
 }
 
 static IOReturn updateCountryProperties(OSObject *target, void *argument, void *logging, void *, void *) {
@@ -719,6 +779,15 @@ int Bridge::command(const Endpoint &endpoint, bool set, LegacyRequest &request, 
     contexts = &context;
     IOSimpleLockUnlock(contextLock);
     const bool startAP = set && request.request.type == HostAPModeRequest && request.request.value == NetworkModeStart;
+    const bool stopAP = set && request.request.type == HostAPModeRequest && request.request.value == NetworkModeStop;
+    const bool cancelRestore = set && ((isNetworkModeRequest(request.request.type) &&
+        request.request.value == NetworkModeStart) ||
+        (request.request.type == PowerRequest && request.request.length <= size &&
+         isNetworkPowerOff(static_cast<const uint8_t *>(shadow), request.request.length)));
+    const bool restorePending = cancelRestore &&
+        endpoint.controller->getProperty("SimpleBCMHostAPRestoreAWDL") == kOSBooleanTrue;
+    if (restorePending)
+        endpoint.controller->setProperty("SimpleBCMHostAPRestoreAWDL", false);
     const bool releaseAP = set &&
         (isNetworkModeRequest(request.request.type) || request.request.type == AssociateRequest || request.request.type == 26 ||
          (request.request.type == PowerRequest && request.request.length <= size &&
@@ -737,6 +806,10 @@ int Bridge::command(const Endpoint &endpoint, bool set, LegacyRequest &request, 
     }
     if (result && active)
         endpoint.controller->setProperty("SimpleBCMHostAPActive", true);
+    if (!result && stopAP && active)
+        endpoint.controller->setProperty("SimpleBCMHostAPRestoreAWDL", true);
+    else if (result && restorePending)
+        endpoint.controller->setProperty("SimpleBCMHostAPRestoreAWDL", true);
     IOSimpleLockLock(contextLock);
     for (auto cursor = &contexts; *cursor; cursor = &(*cursor)->next) {
         if (*cursor == &context) {
@@ -910,10 +983,12 @@ void Bridge::patchImage(KernelPatcher &patcher, size_t index, mach_vm_address_t 
         virtualController = reinterpret_cast<Controller>(patcher.solveSymbol(index, "__ZN23IO80211VirtualInterface13getControllerEv"));
         classicName = reinterpret_cast<BSDName>(patcher.solveSymbol(index, "__ZN16IO80211Interface10getBSDNameEv"));
         virtualName = reinterpret_cast<BSDName>(patcher.solveSymbol(index, "__ZN23IO80211VirtualInterface10getBSDNameEv"));
+        updateVirtualFlags = reinterpret_cast<InterfaceFlags>(patcher.solveSymbol(index,
+            "__ZN23IO80211VirtualInterface18handleSIOCSIFFLAGSEPKc"));
         skywalkName = reinterpret_cast<BSDName>(patcher.solveSymbol(index, "__ZN23IO80211SkywalkInterface10getBSDNameEv"));
         classicCommand = reinterpret_cast<PerformCommand>(patcher.solveSymbol(index, "__ZN16IO80211Interface14performCommandEP19IONetworkControllermPvS2_"));
         classicRequest = reinterpret_cast<DriverRequest>(patcher.solveSymbol(index, "__ZN17IO80211Controller22apple80211RequestIoctlEjiP16IO80211InterfacePv"));
-        if (!getRequest || !setRequest || !classicController || !virtualController || !classicName || !virtualName || !skywalkName || !classicCommand || !classicRequest) {
+        if (!getRequest || !setRequest || !classicController || !virtualController || !classicName || !virtualName || !updateVirtualFlags || !skywalkName || !classicCommand || !classicRequest) {
             patcher.clearError();
             reject("LegacySymbolsMissing");
             return;
@@ -1054,6 +1129,8 @@ void Bridge::publish(IOService *service) {
         auto controllerLoop = controller->getWorkLoop();
         if (controllerLoop && controller->getProperty("SimpleBCMHostAPActive") == kOSBooleanTrue)
             controllerLoop->runAction(maintainNetworkMAC, controller);
+        else if (controllerLoop && controller->getProperty("SimpleBCMHostAPRestoreAWDL") == kOSBooleanTrue)
+            controllerLoop->runAction(restoreNetworkAWDL, controller);
         service->setProperty("WirelessControllerIdentity", controller->metaCast("AirPortDriver") ? "AirPortDriver" : "Unrecognized");
         auto bytes = reinterpret_cast<const uint8_t *>(controller);
         service->setProperty("BrcmPowerState", __atomic_load_n(reinterpret_cast<const uint64_t *>(bytes + 6800), __ATOMIC_RELAXED), 64);
