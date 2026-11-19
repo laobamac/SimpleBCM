@@ -64,6 +64,10 @@ Legacy 与原生 IO80211Family 的冲突元类在载荷 CString 中重命名，�
 
 活动状态和启动时同步成功不能保证后续驱动操作维持同一接收地址。现有事件工作线程以及每秒状态更新在控制器工作循环中复核活动主 AP 的 BSSID 和当前地址，发现不一致时才执行原地址设置及接收匹配刷新。设备终止、休眠、电源切换、非工作电源状态或 BSS 尚未 up 时不写硬件。该复核不读取报文、不改动 STA 地址，也不增加全局收发钩子。
 
+活动热点停止请求成功后，桥接器记录 `SimpleBCMHostAPRestoreAWDL`，由现有状态更新在控制器工作循环中恢复 AWDL 接口。对原本已开启的接口，使用公开 ifnet 标志 API 临时清除、恢复 `IFF_UP`，两次调用原 `IO80211VirtualInterface::handleSIOCSIFFLAGS`，由原路径处理控制器启停、BPF 队列及 P2P 管理器；成功后清除待恢复标记。
+
+只处理同一控制器的 AWDL 虚拟接口，并验证 BSD ifnet 的 softc 与 IOService 一致。原驱动公开状态偏移 32 是无线电工作标志，偏移 33 是硬件关闭标志；无线电未恢复、主 BSS 仍为 AP 或正在切换电源时等待。原本关闭的接口保持关闭，新模式启动请求或显式关闭 Wi-Fi 取消待恢复工作，原请求失败时恢复待办状态。
+
 ## 电源与载荷
 
 原生 IOSkywalkNetworkBSDClient 的电源父节点通过 `joinPMtree` 接到无线控制器的实际 IOPCIDevice provider；网络 IOService 的 provider 关系保持不变。接口上下文持有 PCI provider，停止或启动失败时释放。AirPort 原始电源表不作改写。
