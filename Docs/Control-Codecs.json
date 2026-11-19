@@ -476,6 +476,134 @@
       "operation": "_copyout"
     }
   ],
+  "networkModeTransfer": {
+    "requests": [
+      24,
+      25
+    ],
+    "start": 1,
+    "stop": 2,
+    "legacySize": 1500,
+    "nativeSize": {
+      "Sonoma": 1756,
+      "Sequoia": 1764,
+      "Tahoe": 1768
+    },
+    "legacyCodec": "0x84b4f",
+    "canaryOffset": 1504,
+    "returnAddressOffset": 1560,
+    "routePrefixSize": 20,
+    "legacyKeyOffset": 60,
+    "extendedKeyOffset": 64,
+    "keySize": 148,
+    "legacyRSNOffset": 212,
+    "legacyRSNCapacity": 256,
+    "nativeRSNCapacity": 512,
+    "extendedAuthSystems": [
+      "Sequoia",
+      "Tahoe"
+    ],
+    "stopTransfer": "Zero length; no payload conversion",
+    "security": {
+      "scope": "HostAP request 25; WPA2 Personal CCMP/PSK without management frame protection",
+      "nativeAuthUpper": 8,
+      "legacyAuthUpper": 1024,
+      "firmwareWPAAuth": 128,
+      "nativeProducer": "airportd CWHostAPModeManager",
+      "nativeCipher": 0,
+      "nativeKeyVersion": 0,
+      "nativePassphraseBytes": [
+        8,
+        63
+      ],
+      "nativeRSN": "Empty for normal WPA2 hotspot configurations",
+      "legacyCipher": 10,
+      "legacyKeyVersion": 1,
+      "hexPSKBytes": 64,
+      "alternativeRawPMK": {
+        "nativeCipher": 6,
+        "bytes": 32,
+        "requires": "CCMP/PSK RSN"
+      },
+      "firmwarePMKCommand": 268,
+      "firmwarePMKFlags": 1,
+      "firmwareAESWsec": 4,
+      "keyMaterial": "Preserve UTF-8 passphrase bytes and length; encode supplied raw PMKs as hexadecimal",
+      "ordering": "Set authentication, clear keys, enable AES, install PMK, preserve AES during final SSID calculation",
+      "SSIDCipherScope": "Matching thread, controller and interface of a normalized WPA2 HostAP start",
+      "firmwareErrors": "Direct wlIoctl PMK request propagates the firmware result instead of ignoring it",
+      "authenticator": {
+        "scope": "AP BSS only; create only when the existing authentication pointer is null",
+        "constructor": "_wlc_authenticator_attach",
+        "size": 296,
+        "BSSOffset": 32,
+        "cleanup": "Existing _wlc_bsscfg_ap_deinit calls _wlc_authenticator_detach and clears the pointer",
+        "association": "Existing AP association completion starts the original four-way handshake"
+      },
+      "AKMPolicy": {
+        "scope": "Normalized WPA2 HostAP key installation only",
+        "originalSetter": "_wlc_sae_process_akm_type",
+        "AKM": 2,
+        "behavior": "Use Open System authentication and clear the incompatible mandatory-MFP policy"
+      },
+      "APMACSynchronization": {
+        "scope": "Enabled, up primary AP BSS after successful original HostAP SSID setting",
+        "BSSIDOffset": 232,
+        "currentMACOffset": 238,
+        "setter": "__ZN15AirPort_BrcmNIC18setHardwareAddressEPK17IOEthernetAddress",
+        "receiveFilter": "_wlc_set_mac",
+        "behavior": "Use original hardware setter when receive MAC differs from advertised BSSID; verify equality",
+        "invalidAddress": "Reject zero or multicast BSSID and non-primary BSS without writing hardware",
+        "failure": "Return EIO to the original HostAP caller"
+      },
+      "unsupportedProfiles": "Reject before mutation; no implicit open-network fallback",
+      "explicitOpen": "Preserved; no AES or PMK installation",
+      "IBSS": "Layout conversion only",
+      "consumers": {
+        "AirPortOriginal": {
+          "keyInstallCall": "0x45ff4",
+          "keyClearCall": "0x45fbd",
+          "cipherDispatch": "0x446bc",
+          "rawPMKNoInstallBranch": "0x44515",
+          "PSKInstallBranch": "0x445a3",
+          "PMKParser": "0xf3ebf",
+          "AESSetter": "0x2ee3c",
+          "SSIDCipherCall": "0x3b4c9",
+          "firmwareRequest": "0x38394",
+          "SAEPolicyReset": "0x11374",
+          "APSSIDCall": "0x4613a",
+          "hardwareMACSetter": "0x38b96",
+          "receiveMACSetter": "0x1123e1",
+          "BSSIDSetter": "0x11243a"
+        },
+        "AirPort": {
+          "keyInstallCall": "0x45ff4",
+          "keyClearCall": "0x45fbd",
+          "cipherDispatch": "0x446bc",
+          "rawPMKNoInstallBranch": "0x44515",
+          "PSKInstallBranch": "0x445a3",
+          "PMKParser": "0xf3ebf",
+          "AESSetter": "0x2ee3c",
+          "SSIDCipherCall": "0x3b4c9",
+          "firmwareRequest": "0x38394",
+          "SAEPolicyReset": "0x11374",
+          "APSSIDCall": "0x4613a",
+          "hardwareMACSetter": "0x38b96",
+          "receiveMACSetter": "0x1123e1",
+          "BSSIDSetter": "0x11243a"
+        }
+      },
+      "validation": "Native configuration layouts and original driver consumer instructions audited from the shipped binaries"
+    },
+    "powerPreservation": {
+      "networkDisableCall": "0x8f4b9",
+      "systemPowerTransitionOffset": 1016,
+      "owner": "Successful Classic HostAP start",
+      "scope": "Retain radio for network-interface disable while HostAP is active",
+      "release": "HostAP stop, association, explicit mode change, radio off, system power transition or termination"
+    },
+    "unrepresentableExtensions": "Rejected without changing authentication or encryption"
+  },
   "associateTransfer": {
     "request": 20,
     "legacySize": 548,

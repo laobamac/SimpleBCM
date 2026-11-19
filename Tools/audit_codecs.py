@@ -11,9 +11,133 @@ import hashlib
 import json
 import re
 import struct
+from pathlib import Path
 
 from macho import Image
-from profiles import IMAGES, ROOT, SCALAR_GET_REQUESTS, relocations
+from profiles import IMAGES, ROOT, SCALAR_GET_REQUESTS, NETWORK_MODE_SYMBOL, NETWORK_CIPHER_SYMBOL, NETWORK_IOVAR_SYMBOL, NETWORK_FIRMWARE_SYMBOL, NETWORK_MAC_SYMBOL, relocations, network_power_sites, network_cipher_site, network_ssid_cipher_site, network_ap_ssid_site
+
+
+def audit_native_network_modes():
+    from native_abi import Mach, insns
+
+    layouts = {23: (0x6DC, 0x3C, 0x18, 0x2D8), 24: (0x6E4, 0x40, 0x1C, 0x2DC),
+               25: (0x6E8, 0x40, 0x1C, 0x2DC)}
+    verified = []
+    for volume in (Path('/'), Path('/Volumes/Macintosh HD 1'), Path('/Volumes/Macintosh HD 2')):
+        path = volume / 'System/Library/KernelCollections/BootKernelExtensions.kc'
+        if not path.is_file():
+            continue
+        kernel = Mach(path, 'com.apple.kernel')
+        major = struct.unpack('<I', kernel.read(kernel.names['_version_major'][4], 4))[0]
+        kernel.close()
+        if major not in layouts:
+            continue
+        image = Mach(path, 'com.apple.iokit.IO80211Family')
+        try:
+            name = next(n for n in image.names if n.startswith('__ZL22setIBSS_Or_HostAP_Mode') and n.endswith('reqb'))
+            start, data = image.funcbytes(name)
+            rows = list(insns(data, start))
+            expected, key, ssid, ie = layouts[major]
+            zero = next(index for index, (_, _, text, _) in enumerate(rows)
+                        if re.fullmatch(r'movl\s+\$' + str(expected) + r',\s*%esi', text))
+            base = int(re.fullmatch(r'leaq\s+(-\d+)\(%rbp\),\s*%rdi', rows[zero - 1][2])[1])
+            check = next(address for n, (_, _, _, _, address) in image.names.items()
+                         if n.startswith('__ZL31checkValidationForApple80211Key'))
+            call = next(index for index, (address, _, _, raw) in enumerate(rows)
+                        if len(raw) == 5 and raw[0] == 0xE8 and
+                        address + 5 + struct.unpack('<i', raw[1:])[0] == check)
+            key_address = int(re.fullmatch(r'leaq\s+(-\d+)\(%rbp\),\s*%rdi', rows[call - 1][2])[1])
+            reads = [int(match[1]) - base for _, _, text, _ in rows
+                     if (match := re.fullmatch(r'movl\s+(-\d+)\(%rbp\),\s*%r10d', text))]
+            if key_address - base != key or reads[:2] != [ssid, ie] or not any(
+                    re.fullmatch(r'cmpl\s+\$' + str(expected) + r',\s*24\(%r1[23]\)', text)
+                    for _, _, text, _ in rows):
+                raise RuntimeError('原生热点配置 ABI 与转换布局不一致：' + str(volume))
+            verified.append(major)
+        finally:
+            image.close()
+    return verified
+
+
+def audit_network_security():
+    from native_abi import Mach, insns
+
+    consumers = {}
+    for label in ('AirPortOriginal', 'AirPort'):
+        binary = Mach(IMAGES[label])
+        try:
+            call = network_cipher_site(Image(IMAGES[label]))
+            start, cipher = binary.funcbytes(NETWORK_CIPHER_SYMBOL)
+            assert len(cipher) == 0x690
+            dispatch = start + 0x664
+            offsets = struct.unpack_from('<11i', cipher, 0x664)
+            assert dispatch + offsets[6] == 0x44515 and dispatch + offsets[10] == 0x445A3
+            rows = [text for _, _, text, _ in insns(cipher[:0x664], start)]
+            for pattern in (r'movw\s+\$1,\s*-118\(%rbp\)', r'movl\s+\$268,\s*%esi',
+                            r'movl\s+\$68,\s*%ecx'):
+                assert any(re.fullmatch(pattern, text) for text in rows)
+            parser, data = binary.funcbytes('_wlc_auth_set_pmk')
+            rows = [text for _, _, text, _ in insns(data, parser)]
+            for pattern in (r'testb\s+\$1,\s*2\(%r14\)', r'cmpw\s+\$64,\s*%ax',
+                            r'orb\s+\$2,\s*32\(%rbx\)'):
+                assert any(re.fullmatch(pattern, text) for text in rows)
+            policy, data = binary.funcbytes('_wlc_sae_process_akm_type')
+            rows = [text for _, _, text, _ in insns(data, policy)]
+            for pattern in (r'cmpw\s+\$8,\s*%si', r'orb\s+\$1,\s*1058\(%r14\)',
+                            r'andb\s+\$-2,\s*1058\(%r14\)', r'movw\s+\$0,\s*116\(%r14\)'):
+                assert any(re.fullmatch(pattern, text) for text in rows)
+            consumers[label] = {'keyInstallCall': hex(call), 'keyClearCall': hex(call - 0x37),
+                                'cipherDispatch': hex(dispatch), 'rawPMKNoInstallBranch': hex(dispatch + offsets[6]),
+                                'PSKInstallBranch': hex(dispatch + offsets[10]), 'PMKParser': hex(parser),
+                                'AESSetter': hex(binary.names[NETWORK_IOVAR_SYMBOL][4]),
+                                'SSIDCipherCall': hex(network_ssid_cipher_site(Image(IMAGES[label]))),
+                                'firmwareRequest': hex(binary.names[NETWORK_FIRMWARE_SYMBOL][4])}
+            consumers[label]['SAEPolicyReset'] = hex(policy)
+            consumers[label]['APSSIDCall'] = hex(network_ap_ssid_site(Image(IMAGES[label])))
+            setter, data = binary.funcbytes(NETWORK_MAC_SYMBOL)
+            assert len(data) == 202
+            rows = [text for _, _, text, _ in insns(data, setter)]
+            for pattern in (r'movl\s+\$6,\s*%r9d', r'callq\s+\*3656\(%rax\)', r'pushq\s+\$1', r'pushq\s+\$0'):
+                assert any(re.fullmatch(pattern, text) for text in rows)
+            ra, data = binary.funcbytes('_wlc_set_mac')
+            rows = [text for _, _, text, _ in insns(data, ra)]
+            for pattern in (r'cmpq\s+%rdi,\s*832\(%rbx\)', r'addq\s+\$238,\s*%rdx', r'movl\s+\$32776,\s*%ecx'):
+                assert any(re.fullmatch(pattern, text) for text in rows)
+            bssid, data = binary.funcbytes('_wlc_set_bssid')
+            assert any(re.fullmatch(r'leaq\s+232\(%rbx\),\s*%rdx', text) for _, _, text, _ in insns(data, bssid))
+            consumers[label]['hardwareMACSetter'] = hex(setter)
+            consumers[label]['receiveMACSetter'] = hex(ra)
+            consumers[label]['BSSIDSetter'] = hex(bssid)
+        finally:
+            binary.close()
+    return {'scope': 'HostAP request 25; WPA2 Personal CCMP/PSK without management frame protection',
+            'nativeAuthUpper': 8, 'legacyAuthUpper': 1024, 'firmwareWPAAuth': 128,
+            'nativeProducer': 'airportd CWHostAPModeManager',
+            'nativeCipher': 0, 'nativeKeyVersion': 0, 'nativePassphraseBytes': [8, 63],
+            'nativeRSN': 'Empty for normal WPA2 hotspot configurations', 'legacyCipher': 10, 'legacyKeyVersion': 1,
+            'hexPSKBytes': 64, 'alternativeRawPMK': {'nativeCipher': 6, 'bytes': 32, 'requires': 'CCMP/PSK RSN'},
+            'firmwarePMKCommand': 268, 'firmwarePMKFlags': 1,
+            'firmwareAESWsec': 4, 'keyMaterial': 'Preserve UTF-8 passphrase bytes and length; encode supplied raw PMKs as hexadecimal',
+            'ordering': 'Set authentication, clear keys, enable AES, install PMK, preserve AES during final SSID calculation',
+            'SSIDCipherScope': 'Matching thread, controller and interface of a normalized WPA2 HostAP start',
+            'firmwareErrors': 'Direct wlIoctl PMK request propagates the firmware result instead of ignoring it',
+            'authenticator': {'scope': 'AP BSS only; create only when the existing authentication pointer is null',
+                              'constructor': '_wlc_authenticator_attach', 'size': 296, 'BSSOffset': 32,
+                              'cleanup': 'Existing _wlc_bsscfg_ap_deinit calls _wlc_authenticator_detach and clears the pointer',
+                              'association': 'Existing AP association completion starts the original four-way handshake'},
+            'AKMPolicy': {'scope': 'Normalized WPA2 HostAP key installation only',
+                          'originalSetter': '_wlc_sae_process_akm_type', 'AKM': 2,
+                          'behavior': 'Use Open System authentication and clear the incompatible mandatory-MFP policy'},
+            'APMACSynchronization': {'scope': 'Enabled, up primary AP BSS after successful original HostAP SSID setting',
+                                     'BSSIDOffset': 232, 'currentMACOffset': 238,
+                                     'setter': NETWORK_MAC_SYMBOL, 'receiveFilter': '_wlc_set_mac',
+                                     'behavior': 'Use original hardware setter when receive MAC differs from advertised BSSID; verify equality',
+                                     'invalidAddress': 'Reject zero or multicast BSSID and non-primary BSS without writing hardware',
+                                     'failure': 'Return EIO to the original HostAP caller'},
+            'unsupportedProfiles': 'Reject before mutation; no implicit open-network fallback',
+            'explicitOpen': 'Preserved; no AES or PMK installation', 'IBSS': 'Layout conversion only',
+            'consumers': consumers,
+            'validation': 'Native configuration layouts and original driver consumer instructions audited from the shipped binaries'}
 
 
 def main():
@@ -59,13 +183,40 @@ def main():
     if not re.search(r"cmpl\s+\$0xc, %eax", capabilities) or not re.search(r"leaq\s+-0x24\(%rbp\), %rsi", capabilities):
         raise RuntimeError("能力位图旧结构发生变化")
     set_entries = {request: struct.unpack("<Q", image.read(image.symbols["_gSetHandlerTable"] + (request - 1) * 8, 8))[0]
-                   for request in [20, 216]}
-    set_assembly = image.disassemble(r"^__ZL19setAssociateRequest|^__ZL14setRoamProfile")
-    if set_entries != {20: 0x84430, 216: 0x8B211} or not re.search(r"movl\s+\$0x224, %ecx", set_assembly) or not re.search(r"cmpl\s+\$0x7c, 0x18\(%r8\)", set_assembly):
+                   for request in [20, 24, 25, 216]}
+    set_assembly = image.disassemble(r"^__ZL19setAssociateRequest|^__ZL14setRoamProfile|^__ZL22setIBSS_Or_HostAP_Mode")
+    if set_entries != {20: 0x84430, 24: 0x84B4F, 25: 0x84B4F, 216: 0x8B211} or not re.search(r"movl\s+\$0x224, %ecx", set_assembly) or not re.search(r"cmpl\s+\$0x7c, 0x18\(%r8\)", set_assembly):
         raise RuntimeError("关联或漫游配置旧结构发生变化")
+    network_assembly = image.disassemble('^' + NETWORK_MODE_SYMBOL + '$')
+    if not all(re.search(pattern, network_assembly) for pattern in (
+            r'movl\s+\$0x5dc, %esi', r'leaq\s+-0x610\(%rbp\), %rdx',
+            r'movl\s+0x18\(%r15\), %ecx', r'cmpq\s+-0x30\(%rbp\), %rax')):
+        raise RuntimeError('旧热点处理入口的复制边界发生变化')
+    native_network_modes = audit_native_network_modes()
+    network_security = audit_network_security()
+    power_call, transition = network_power_sites(image)
+    assert power_call == 0x8F4B9 and transition == 0x3F8
     report = {"copyright": "Copyright © 2026 laobamac. All rights reserved.", "legacySHA256": hashlib.sha256(image.path.read_bytes()).hexdigest(),
               "getTableCapacity": 417, "populatedGetEntries": sum(bool(x) for x in table), "uniqueGetCodecs": len(set(table) - {0}),
               "scalarGetRequests": scalar, "adaptedCopySites": copies,
+              "networkModeTransfer": {"requests": [24, 25], "start": 1, "stop": 2,
+                                      "legacySize": 0x5DC,
+                                      "nativeSize": {"Sonoma": 0x6DC, "Sequoia": 0x6E4, "Tahoe": 0x6E8},
+                                      "legacyCodec": "0x84b4f", "canaryOffset": 0x5E0,
+                                      "returnAddressOffset": 0x618, "routePrefixSize": 20,
+                                      "legacyKeyOffset": 0x3C, "extendedKeyOffset": 0x40,
+                                      "keySize": 0x94, "legacyRSNOffset": 0xD4,
+                                      "legacyRSNCapacity": 0x100, "nativeRSNCapacity": 0x200,
+                                      "extendedAuthSystems": ["Sequoia", "Tahoe"],
+                                      "stopTransfer": "Zero length; no payload conversion",
+                                      "security": network_security,
+                                      "powerPreservation": {
+                                          "networkDisableCall": hex(power_call),
+                                          "systemPowerTransitionOffset": transition,
+                                          "owner": "Successful Classic HostAP start",
+                                          "scope": "Retain radio for network-interface disable while HostAP is active",
+                                          "release": "HostAP stop, association, explicit mode change, radio off, system power transition or termination"},
+                                      "unrepresentableExtensions": "Rejected without changing authentication or encryption"},
               "associateTransfer": {"request": 20, "legacySize": 0x224, "nativeSize": {"Sonoma": 0x358, "Sequoia": 0x384, "Tahoe": 0x38C},
                                     "legacyCodec": "0x84430", "nativeProducer": {"Sequoia": "0xa053", "Tahoe": "0xa094"}, "driverConsumer": "0x42b8e",
                                     "extendedLayoutSystems": ["Sequoia", "Tahoe"],
@@ -120,6 +271,7 @@ def main():
     if not destination.exists() or destination.read_text() != content:
         destination.write_text(content)
     print(f"GET 表核对：{report['populatedGetEntries']} 项 / {report['uniqueGetCodecs']} 个编解码入口，{len(scalar)} 项标量结果，每个后端 16 处受限拷贝入口。")
+    print(f'热点入口、1500 字节复制边界及原生配置布局核对通过：Darwin {native_network_modes}')
 
 
 if __name__ == "__main__":
