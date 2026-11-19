@@ -9,6 +9,7 @@
 
 import hashlib
 import json
+import re
 import struct
 from pathlib import Path
 
@@ -24,6 +25,17 @@ IMAGES = {
     "AirPort": BINARY / "AirPortBrcmNIC-Tahoe-v1.0.0/AirPortBrcmNIC-Tahoe.kext/Contents/MacOS/AirPortBrcmNIC",
 }
 AWDL_SELECT_SYMBOL = "__ZN22IO80211AWDLPeerManager26selectChannelsToUseForAWDLEv"
+NETWORK_MODE_SYMBOL = "__ZL22setIBSS_Or_HostAP_ModeP17IO80211ControllerP16IO80211InterfaceP23IO80211VirtualInterfaceP21IO80211InfraInterfaceP13apple80211reqb"
+NETWORK_DISABLE_SYMBOL = "__ZN17IO80211Controller7disableEP18IONetworkInterface"
+SYSTEM_POWER_CHANGE_SYMBOL = "__ZN17IO80211Controller16powerChangeGatedEP8OSObjectPvS2_S2_S2_"
+HOST_AP_SYMBOL = "__ZN15AirPort_BrcmNIC15setHOST_AP_MODEEP8OSObjectP23apple80211_network_data"
+NETWORK_CIPHER_SYMBOL = "__ZN15AirPort_BrcmNIC13setCIPHER_KEYEP8OSObjectP14apple80211_key"
+NETWORK_IOVAR_SYMBOL = "__ZN15AirPort_BrcmNIC13wlIovarSetIntEPKci"
+NETWORK_FIRMWARE_SYMBOL = "__ZN15AirPort_BrcmNIC7wlIoctlEjPvmbP8OSObject"
+NETWORK_CALCULATE_SYMBOL = "__ZN15AirPort_BrcmNIC12wl_calc_wsecEP8OSObject"
+NETWORK_SSID_SYMBOL = "__ZN15AirPort_BrcmNIC7setSSIDEP8OSObjectP20apple80211_ssid_data"
+NETWORK_MAC_SYMBOL = "__ZN15AirPort_BrcmNIC18setHardwareAddressEPK17IOEthernetAddress"
+NETWORK_AUTHENTICATOR_SYMBOL = "_wlc_authenticator_attach"
 SYMBOLS = {
     "Legacy": [
         "__ZN16IO80211Interface13newUserClientEP4taskPvjP12OSDictionaryPP12IOUserClient",
@@ -43,16 +55,24 @@ SYMBOLS = {
         "__ZN17IO80211Controller22apple80211RequestIoctlEjiP16IO80211InterfacePv",
         "__ZN16IO80211Interface25updateCountryCodePropertyEb",
         AWDL_SELECT_SYMBOL,
+        NETWORK_MODE_SYMBOL,
+        NETWORK_DISABLE_SYMBOL,
+        SYSTEM_POWER_CHANGE_SYMBOL,
     ],
     "AirPort": ["_bcm_decode_anqp_nai_realm_print", "__dma_detach", "_dma64_txfast", "__dma_rxfill", "__dma_getnextrxp",
                 "__ZN15AirPort_BrcmNIC9getLOCALEEP8OSObjectP22apple80211_locale_data",
-                "__ZN15AirPort_BrcmNIC15getCOUNTRY_CODEEP8OSObjectP28apple80211_country_code_data"],
+                "__ZN15AirPort_BrcmNIC15getCOUNTRY_CODEEP8OSObjectP28apple80211_country_code_data",
+                HOST_AP_SYMBOL, NETWORK_CIPHER_SYMBOL, NETWORK_IOVAR_SYMBOL,
+                NETWORK_FIRMWARE_SYMBOL, NETWORK_CALCULATE_SYMBOL, NETWORK_SSID_SYMBOL,
+                NETWORK_AUTHENTICATOR_SYMBOL,
+                "__ZNK15AirPort_BrcmNIC9getVirtIfEP8OSObject", "_wlc_bsscfg_find_by_wlcif", "_wlc_sae_process_akm_type",
+                NETWORK_MAC_SYMBOL],
 }
 SYMBOLS["AirPortOriginal"] = SYMBOLS["AirPort"]
 HARDWARE_VERSION_SYMBOL = "__ZN15AirPort_BrcmNIC19getHARDWARE_VERSIONEP8OSObjectP23apple80211_version_data"
 ROUTE_SYMBOLS = {
     "Legacy": SYMBOLS["Legacy"][:5] + ["__ZN16IO80211Interface25updateCountryCodePropertyEb",
-                                       AWDL_SELECT_SYMBOL],
+                                       AWDL_SELECT_SYMBOL, NETWORK_MODE_SYMBOL],
     "AirPort": [HARDWARE_VERSION_SYMBOL, "__ZN15AirPort_BrcmNIC9getLOCALEEP8OSObjectP22apple80211_locale_data"],
 }
 ROUTE_SYMBOLS["AirPortOriginal"] = ROUTE_SYMBOLS["AirPort"]
@@ -84,6 +104,81 @@ def numbers(data):
     return ", ".join(f"0x{x:02X}" for x in data)
 
 
+def network_power_sites(image):
+    from native_abi import Mach, insns
+
+    binary = Mach(image.path)
+    try:
+        address, data = binary.funcbytes(NETWORK_DISABLE_SYMBOL)
+        rows = list(insns(data, address))
+        target = image.symbols['__ZN17IO80211Controller22apple80211RequestIoctlEjiP16IO80211InterfacePv']
+        calls = [a for index, (a, _, _, raw) in enumerate(rows)
+                 if len(raw) == 5 and raw[0] == 0xE8 and
+                 a + 5 + struct.unpack_from('<i', raw, 1)[0] == target and
+                 any(re.fullmatch(r'movl\s+\$19,\s*%edx', row[2]) for row in rows[max(0, index - 4):index])]
+        assert len(calls) == 1
+        address, data = binary.funcbytes(SYSTEM_POWER_CHANGE_SYMBOL)
+        writes = [int(match[1]) for _, _, text, _ in insns(data, address)
+                  if (match := re.fullmatch(r'movb\s+\$[01],\s*(\d+)\(%rdi\)', text))]
+        assert len(writes) == 2 and writes[0] == writes[1] and writes[0] < 1048
+        return calls[0], writes[0]
+    finally:
+        binary.close()
+
+
+def network_cipher_site(image):
+    from native_abi import Mach, insns
+
+    binary = Mach(image.path)
+    try:
+        start, data = binary.funcbytes(HOST_AP_SYMBOL)
+        target = image.symbols[NETWORK_CIPHER_SYMBOL]
+        rows = list(insns(data, start))
+        calls = [address for address, _, _, raw in rows
+                 if len(raw) == 5 and raw[0] == 0xE8 and
+                 address + 5 + struct.unpack_from('<i', raw, 1)[0] == target]
+        assert len(calls) == 2 and calls[0] - start == 0xA61
+        assert calls[1] - start == 0xA98
+        instructions = {address: text for address, _, text, _ in rows}
+        assert re.fullmatch(r'xorl\s+%edx,\s*%edx', instructions[calls[0] - 2])
+        assert re.fullmatch(r'cmpl\s+\$0,\s*64\(%r13\)', instructions[start + 0xA71])
+        assert re.fullmatch(r'leaq\s+60\(%r13\),\s*%rdx', instructions[start + 0xA7C])
+        return calls[1]
+    finally:
+        binary.close()
+
+
+def network_ssid_cipher_site(image):
+    from native_abi import Mach, insns
+
+    binary = Mach(image.path)
+    try:
+        start, body = binary.funcbytes(NETWORK_SSID_SYMBOL)
+        target = image.symbols[NETWORK_CALCULATE_SYMBOL]
+        calls = [address for address, _, _, raw in insns(body, start)
+                 if len(raw) == 5 and raw[0] == 0xE8 and
+                 address + 5 + struct.unpack_from('<i', raw, 1)[0] == target]
+        assert len(calls) == 1 and calls[0] - start == 0xB5
+        return calls[0]
+    finally:
+        binary.close()
+
+
+def network_ap_ssid_site(image):
+    from native_abi import Mach, insns
+
+    binary = Mach(image.path)
+    try:
+        start, body = binary.funcbytes(HOST_AP_SYMBOL)
+        calls = [address for address, _, _, raw in insns(body, start)
+                 if len(raw) == 5 and raw[0] == 0xE8 and
+                 address + 5 + struct.unpack_from('<i', raw, 1)[0] == binary.names[NETWORK_SSID_SYMBOL][4]]
+        assert calls == [0x4613A]
+        return calls[0]
+    finally:
+        binary.close()
+
+
 def main():
     lines = ["//", "//  Profiles.hpp", "//  SimpleBCM", "//", "//  Created by laobamac on 2026/9/15.", "//  Copyright © 2026 laobamac. All rights reserved.", "//", "", "#ifndef SIMPLEBCM_PROFILES_HPP", "#define SIMPLEBCM_PROFILES_HPP", "", "#include <stdint.h>", "", "namespace bcm {", "struct ByteGuard { uint32_t offset; uint8_t bytes[32]; uint8_t mask[32]; };", "struct CopySite { uint32_t offset; bool output; };", ""]
     manifest = {"copyright": "Copyright © 2026 laobamac. All rights reserved.", "supportedKernel": "23.x / 24.x / 25.x", "images": {}}
@@ -100,6 +195,10 @@ def main():
             guards.append((address, name))
         scalar = []
         if label == "Legacy":
+            power_call, transition = network_power_sites(image)
+            guards.append((power_call, 'HostAP network-disable power request'))
+            lines.append(f'static constexpr uint32_t LegacyNetworkDisablePowerCall = 0x{power_call:X};')
+            lines.append(f'static constexpr uint32_t LegacySystemPowerTransitionOffset = 0x{transition:X};')
             table = struct.unpack("<417Q", image.read(image.symbols["_gGetHandlerTable"], 417 * 8))
             for request in SCALAR_GET_REQUESTS:
                 address = table[request - 1]
@@ -120,6 +219,15 @@ def main():
                 guards.append((address, image.name(address)))
         if label.startswith("AirPort"):
             guards += [(0x2C2612, "TX backend identity"), (0x2C3D78, "RX fill backend identity"), (0x2C4286, "RX consume backend identity")]
+            cipher_call = network_cipher_site(image)
+            guards.append((cipher_call, 'HostAP cipher installation'))
+            lines.append(f'static constexpr uint32_t {label}NetworkCipherCall = 0x{cipher_call:X};')
+            ssid_cipher_call = network_ssid_cipher_site(image)
+            guards.append((ssid_cipher_call, 'SSID encryption calculation'))
+            lines.append(f'static constexpr uint32_t {label}NetworkSSIDCipherCall = 0x{ssid_cipher_call:X};')
+            ap_ssid_call = network_ap_ssid_site(image)
+            guards.append((ap_ssid_call, 'HostAP SSID setting and MAC synchronization'))
+            lines.append(f'static constexpr uint32_t {label}NetworkAPSSIDCall = 0x{ap_ssid_call:X};')
         lines.append(f"static const ByteGuard {label}Guards[] = {{")
         for address, _ in guards:
             mask = bytearray([255] * 32)
@@ -137,6 +245,13 @@ def main():
         manifest["images"][label] = {"path": str(path.relative_to(ROOT)), "uuid": image.uuid, "sha256": hashlib.sha256(path.read_bytes()).hexdigest(), "guards": [{"address": hex(a), "symbol": n} for a, n in guards], "copySites": [{"address": hex(a), "output": o} for a, o in sorted(copies)]}
         if scalar:
             manifest["images"][label]["scalarGetRequests"] = scalar
+            manifest["images"][label]["networkModePower"] = {
+                "disablePowerCall": hex(power_call), "systemPowerTransitionOffset": transition,
+                "scope": "Retain active HostAP radio during network-interface disable; allow system power transitions"}
+        if label.startswith('AirPort'):
+            manifest['images'][label]['networkCipherCall'] = hex(cipher_call)
+            manifest['images'][label]['networkSSIDCipherCall'] = hex(ssid_cipher_call)
+            manifest['images'][label]['networkAPSSIDCall'] = hex(ap_ssid_call)
     for label, other in [("AirPort", "AirPortOriginal"), ("AirPortOriginal", "AirPort")]:
         image, alternative = Image(IMAGES[label]), Image(IMAGES[other])
         relocs = relocations(image) + relocations(alternative)

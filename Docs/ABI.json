@@ -72,6 +72,22 @@
           "symbol": "__ZN16IO80211Interface25updateCountryCodePropertyEb"
         },
         {
+          "address": "0x84b4f",
+          "symbol": "__ZL22setIBSS_Or_HostAP_ModeP17IO80211ControllerP16IO80211InterfaceP23IO80211VirtualInterfaceP21IO80211InfraInterfaceP13apple80211reqb"
+        },
+        {
+          "address": "0x8f372",
+          "symbol": "__ZN17IO80211Controller7disableEP18IONetworkInterface"
+        },
+        {
+          "address": "0x92db8",
+          "symbol": "__ZN17IO80211Controller16powerChangeGatedEP8OSObjectPvS2_S2_S2_"
+        },
+        {
+          "address": "0x8f4b9",
+          "symbol": "HostAP network-disable power request"
+        },
+        {
           "address": "0x78617",
           "symbol": "__ZL12getPowersaveP17IO80211ControllerP16IO80211InterfaceP23IO80211VirtualInterfaceP21IO80211InfraInterfaceP13apple80211reqb+0x0"
         },
@@ -588,7 +604,12 @@
           "address": "0x83145",
           "symbol": "__ZL26getAssociateExtendedResultP17IO80211ControllerP16IO80211InterfaceP23IO80211VirtualInterfaceP21IO80211InfraInterfaceP13apple80211reqb+0x0"
         }
-      ]
+      ],
+      "networkModePower": {
+        "disablePowerCall": "0x8f4b9",
+        "systemPowerTransitionOffset": 1016,
+        "scope": "Retain active HostAP radio during network-interface disable; allow system power transitions"
+      }
     },
     "AirPortOriginal": {
       "path": ".research/binaries/IO80211FamilyLegacy-v1.0.0/IO80211FamilyLegacy.kext/Contents/PlugIns/AirPortBrcmNIC.kext/Contents/MacOS/AirPortBrcmNIC",
@@ -624,6 +645,50 @@
           "symbol": "__ZN15AirPort_BrcmNIC15getCOUNTRY_CODEEP8OSObjectP28apple80211_country_code_data"
         },
         {
+          "address": "0x4555c",
+          "symbol": "__ZN15AirPort_BrcmNIC15setHOST_AP_MODEEP8OSObjectP23apple80211_network_data"
+        },
+        {
+          "address": "0x44058",
+          "symbol": "__ZN15AirPort_BrcmNIC13setCIPHER_KEYEP8OSObjectP14apple80211_key"
+        },
+        {
+          "address": "0x2ee3c",
+          "symbol": "__ZN15AirPort_BrcmNIC13wlIovarSetIntEPKci"
+        },
+        {
+          "address": "0x38394",
+          "symbol": "__ZN15AirPort_BrcmNIC7wlIoctlEjPvmbP8OSObject"
+        },
+        {
+          "address": "0x447b0",
+          "symbol": "__ZN15AirPort_BrcmNIC12wl_calc_wsecEP8OSObject"
+        },
+        {
+          "address": "0x3b414",
+          "symbol": "__ZN15AirPort_BrcmNIC7setSSIDEP8OSObjectP20apple80211_ssid_data"
+        },
+        {
+          "address": "0xf30a3",
+          "symbol": "_wlc_authenticator_attach"
+        },
+        {
+          "address": "0x3f53a",
+          "symbol": "__ZNK15AirPort_BrcmNIC9getVirtIfEP8OSObject"
+        },
+        {
+          "address": "0x178d0a",
+          "symbol": "_wlc_bsscfg_find_by_wlcif"
+        },
+        {
+          "address": "0x11374",
+          "symbol": "_wlc_sae_process_akm_type"
+        },
+        {
+          "address": "0x38b96",
+          "symbol": "__ZN15AirPort_BrcmNIC18setHardwareAddressEPK17IOEthernetAddress"
+        },
+        {
           "address": "0x38538",
           "symbol": "__ZN15AirPort_BrcmNIC11wlIocCommonEP13apple80211reqP8OSObjectbb+0x70"
         },
@@ -642,6 +707,18 @@
         {
           "address": "0x2c4286",
           "symbol": "RX consume backend identity"
+        },
+        {
+          "address": "0x45ff4",
+          "symbol": "HostAP cipher installation"
+        },
+        {
+          "address": "0x3b4c9",
+          "symbol": "SSID encryption calculation"
+        },
+        {
+          "address": "0x4613a",
+          "symbol": "HostAP SSID setting and MAC synchronization"
         }
       ],
       "copySites": [
@@ -654,6 +731,9 @@
           "output": true
         }
       ],
+      "networkCipherCall": "0x45ff4",
+      "networkSSIDCipherCall": "0x3b4c9",
+      "networkAPSSIDCall": "0x4613a",
       "rejectsOtherBackendAt": [
         "0x1affb",
         "0x2c1ae8",
@@ -696,6 +776,50 @@
           "symbol": "__ZN15AirPort_BrcmNIC15getCOUNTRY_CODEEP8OSObjectP28apple80211_country_code_data"
         },
         {
+          "address": "0x4555c",
+          "symbol": "__ZN15AirPort_BrcmNIC15setHOST_AP_MODEEP8OSObjectP23apple80211_network_data"
+        },
+        {
+          "address": "0x44058",
+          "symbol": "__ZN15AirPort_BrcmNIC13setCIPHER_KEYEP8OSObjectP14apple80211_key"
+        },
+        {
+          "address": "0x2ee3c",
+          "symbol": "__ZN15AirPort_BrcmNIC13wlIovarSetIntEPKci"
+        },
+        {
+          "address": "0x38394",
+          "symbol": "__ZN15AirPort_BrcmNIC7wlIoctlEjPvmbP8OSObject"
+        },
+        {
+          "address": "0x447b0",
+          "symbol": "__ZN15AirPort_BrcmNIC12wl_calc_wsecEP8OSObject"
+        },
+        {
+          "address": "0x3b414",
+          "symbol": "__ZN15AirPort_BrcmNIC7setSSIDEP8OSObjectP20apple80211_ssid_data"
+        },
+        {
+          "address": "0xf30a3",
+          "symbol": "_wlc_authenticator_attach"
+        },
+        {
+          "address": "0x3f53a",
+          "symbol": "__ZNK15AirPort_BrcmNIC9getVirtIfEP8OSObject"
+        },
+        {
+          "address": "0x178d0a",
+          "symbol": "_wlc_bsscfg_find_by_wlcif"
+        },
+        {
+          "address": "0x11374",
+          "symbol": "_wlc_sae_process_akm_type"
+        },
+        {
+          "address": "0x38b96",
+          "symbol": "__ZN15AirPort_BrcmNIC18setHardwareAddressEPK17IOEthernetAddress"
+        },
+        {
           "address": "0x38538",
           "symbol": "__ZN15AirPort_BrcmNIC11wlIocCommonEP13apple80211reqP8OSObjectbb+0x70"
         },
@@ -714,6 +838,18 @@
         {
           "address": "0x2c4286",
           "symbol": "RX consume backend identity"
+        },
+        {
+          "address": "0x45ff4",
+          "symbol": "HostAP cipher installation"
+        },
+        {
+          "address": "0x3b4c9",
+          "symbol": "SSID encryption calculation"
+        },
+        {
+          "address": "0x4613a",
+          "symbol": "HostAP SSID setting and MAC synchronization"
         }
       ],
       "copySites": [
@@ -726,6 +862,9 @@
           "output": true
         }
       ],
+      "networkCipherCall": "0x45ff4",
+      "networkSSIDCipherCall": "0x3b4c9",
+      "networkAPSSIDCall": "0x4613a",
       "rejectsOtherBackendAt": [
         "0x1affb",
         "0x2c1ae8",

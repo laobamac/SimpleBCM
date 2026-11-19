@@ -18,6 +18,7 @@
 #include <IOKit/IOLib.h>
 #include <IOKit/IOWorkLoop.h>
 #include <libkern/c++/OSData.h>
+#include <libkern/c++/OSBoolean.h>
 #include <kern/clock.h>
 #include <mach/mach_time.h>
 #include <kern/thread_call.h>
@@ -44,6 +45,9 @@ struct CopyContext {
     thread_t thread;
     uintptr_t begin;
     size_t length;
+    IOService *controller;
+    OSObject *interface;
+    bool hostAPWPA2;
     CopyContext *next;
 };
 
@@ -208,6 +212,133 @@ static LocaleQuery originalLocale;
 static CountryCodeQuery getCountryCode;
 static CountryProperty originalCountryProperty;
 static DriverRequest classicRequest;
+using CipherKeySet = int (*)(IOService *, OSObject *, void *);
+using IovarSet = int (*)(IOService *, const char *, int);
+using FirmwareRequest = int (*)(IOService *, uint32_t, void *, size_t, bool, OSObject *);
+using CipherCalculate = uint32_t (*)(IOService *, OSObject *);
+using VirtualFirmwareInterface = void *(*)(IOService *, OSObject *);
+using FirmwareBSS = void *(*)(void *, void *);
+using AuthenticatorCreate = void *(*)(void *, void *);
+using AKMPolicySet = void (*)(void *, uint16_t);
+static CipherKeySet originalCipherKeySet;
+static IovarSet setIovar;
+static FirmwareRequest sendFirmwareRequest;
+static CipherCalculate originalCipherCalculate;
+static VirtualFirmwareInterface firmwareVirtualInterface;
+static FirmwareBSS firmwareBSS;
+static AuthenticatorCreate createAuthenticator;
+static AKMPolicySet setAKMPolicy;
+using APSSIDSet = int (*)(IOService *, OSObject *, void *);
+static APSSIDSet originalAPSSIDSet;
+using HardwareAddressSet = IOReturn (*)(IOService *, const void *);
+static HardwareAddressSet originalHardwareAddressSet;
+
+using NetworkModeSet = int (*)(IOService *, IOService *, IOService *, IOService *, Request *, bool);
+static NetworkModeSet originalNetworkModeSet;
+
+static int setNetworkMode(IOService *controller, IOService *classic, IOService *virtualInterface,
+                          IOService *infra, Request *request, bool wide) {
+    if (!request || !allowLegacyNetworkMode(*request))
+        return EINVAL;
+    const bool active = classic && classic->getProperty("SimpleBCMHostAPActive") == kOSBooleanTrue;
+    if (classic)
+        classic->setProperty("SimpleBCMHostAPActive", false);
+    const auto result = originalNetworkModeSet(controller, classic, virtualInterface, infra, request, wide);
+    if (classic)
+        classic->setProperty("SimpleBCMHostAPActive", result ? active :
+            request->type == HostAPModeRequest && request->value == NetworkModeStart);
+    return result;
+}
+
+static int disableNetworkPower(IOService *controller, uint32_t command, int request,
+                               IOService *interface, void *payload) {
+    if (command == LegacyDriverSetCommand && request == PowerRequest && controller && interface &&
+        !controller->isInactive() && !interface->isInactive() &&
+        controller->metaCast("AirPort_BrcmNIC") &&
+        preserveNetworkModePower(interface->getProperty("SimpleBCMHostAPActive") == kOSBooleanTrue,
+            __atomic_load_n(reinterpret_cast<const uint8_t *>(controller) + LegacySystemPowerTransitionOffset,
+                            __ATOMIC_ACQUIRE) != 0 ||
+            __atomic_load_n(reinterpret_cast<const uint8_t *>(controller) + 6816, __ATOMIC_ACQUIRE) != 0 ||
+            __atomic_load_n(reinterpret_cast<const uint64_t *>(reinterpret_cast<const uint8_t *>(controller) + 6800),
+                            __ATOMIC_ACQUIRE) != 2,
+            static_cast<const uint8_t *>(payload), PowerDataSize)) {
+        uint8_t power[PowerDataSize] {};
+        if (!classicRequest(controller, LegacyDriverGetCommand, PowerRequest, interface, power) &&
+            isNetworkPowerOn(power, sizeof(power)))
+            return 0;
+    }
+    const auto result = classicRequest(controller, command, request, interface, payload);
+    if (!result && interface && command == LegacyDriverSetCommand && request == PowerRequest &&
+        isNetworkPowerOff(static_cast<const uint8_t *>(payload), PowerDataSize))
+        interface->setProperty("SimpleBCMHostAPActive", false);
+    return result;
+}
+
+static int ensureNetworkAuthenticator(IOService *controller, OSObject *interface) {
+    void *wlc;
+    memcpy(&wlc, reinterpret_cast<const uint8_t *>(controller) + 2576, sizeof(wlc));
+    if (!wlc)
+        return ENXIO;
+    auto virtualInterface = firmwareVirtualInterface(controller, interface);
+    void *wlcif = nullptr;
+    if (virtualInterface)
+        memcpy(&wlcif, static_cast<const uint8_t *>(virtualInterface) + 544, sizeof(wlcif));
+    auto configuration = static_cast<uint8_t *>(firmwareBSS(wlc, wlcif));
+    if (!configuration || !configuration[10])
+        return EINVAL;
+    void *pub;
+    void *module;
+    memcpy(&pub, wlc, sizeof(pub));
+    memcpy(&module, static_cast<const uint8_t *>(wlc) + 400, sizeof(module));
+    if (!pub || !static_cast<const uint8_t *>(pub)[210] || !module)
+        return ENOTSUP;
+    void *authenticator;
+    memcpy(&authenticator, configuration + 32, sizeof(authenticator));
+    if (!authenticator) {
+        authenticator = createAuthenticator(wlc, configuration);
+        if (!authenticator)
+            return ENOMEM;
+        memcpy(configuration + 32, &authenticator, sizeof(authenticator));
+    }
+    setAKMPolicy(configuration, 2);
+    return 0;
+}
+
+static int installNetworkCipher(IOService *controller, OSObject *interface, void *payload) {
+    auto key = static_cast<const uint8_t *>(payload);
+    int result = 0;
+    const auto length = key ? readUInt32(key + 4) : 0;
+    const bool secured = key && length >= 8 && length <= 64 && readUInt32(key + 8) == LegacyNetworkPSKCipher;
+    if (secured)
+        result = ensureNetworkAuthenticator(controller, interface);
+    if (!result && secured)
+        result = setIovar(controller, "wsec", 4);
+    if (!result && secured) {
+        uint8_t pmk[68] {};
+        pmk[0] = static_cast<uint8_t>(length);
+        pmk[2] = 1;
+        memcpy(pmk + 4, key + 16, length);
+        result = sendFirmwareRequest(controller, 268, pmk, sizeof(pmk), true, interface);
+        bzero(pmk, sizeof(pmk));
+    } else if (!result)
+        result = originalCipherKeySet(controller, interface, payload);
+    return result;
+}
+
+static uint32_t calculateNetworkCipher(IOService *controller, OSObject *interface) {
+    const auto original = originalCipherCalculate(controller, interface);
+    const auto thread = current_thread();
+    bool secured = false;
+    IOSimpleLockLock(contextLock);
+    for (auto context = contexts; context; context = context->next) {
+        if (context->thread == thread && context->controller == controller && context->interface == interface) {
+            secured = context->hostAPWPA2;
+            break;
+        }
+    }
+    IOSimpleLockUnlock(contextLock);
+    return networkSSIDCipher(secured, original);
+}
 
 static int getLocale(IOService *controller, OSObject *, LocaleData *output) {
     const auto result = originalLocale(controller, nullptr, output);
@@ -216,6 +347,37 @@ static int getLocale(IOService *controller, OSObject *, LocaleData *output) {
     CountryCodeData country {};
     if (!getCountryCode(controller, nullptr, &country))
         resolveLocale(*output, country);
+    return result;
+}
+
+static int setNetworkAPSSID(IOService *controller, OSObject *interface, void *payload) {
+    const auto result = originalAPSSIDSet(controller, interface, payload);
+    if (result)
+        return result;
+    void *wlc;
+    memcpy(&wlc, reinterpret_cast<const uint8_t *>(controller) + 2576, sizeof(wlc));
+    if (!wlc)
+        return result;
+    const auto virtualInterface = firmwareVirtualInterface(controller, interface);
+    void *wlcif = nullptr;
+    if (virtualInterface)
+        memcpy(&wlcif, static_cast<const uint8_t *>(virtualInterface) + 544, sizeof(wlcif));
+    const auto configuration = static_cast<const uint8_t *>(firmwareBSS(wlc, wlcif));
+    if (!configuration || !configuration[8] || !configuration[9] || !configuration[10] ||
+        !memcmp(configuration + 232, configuration + 238, 6))
+        return result;
+    if (configuration != firmwareBSS(wlc, nullptr))
+        return EIO;
+    uint8_t address[6];
+    memcpy(address, configuration + 232, sizeof(address));
+    uint8_t nonzero = 0;
+    for (auto octet : address)
+        nonzero |= octet;
+    if (!nonzero || (address[0] & 1U))
+        return EIO;
+    if (originalHardwareAddressSet(controller, address) != kIOReturnSuccess ||
+        memcmp(configuration + 232, configuration + 238, sizeof(address)))
+        return EIO;
     return result;
 }
 
@@ -538,16 +700,27 @@ static IOReturn postInfra(IOService *self, uint32_t message, void *payload, size
 int Bridge::command(const Endpoint &endpoint, bool set, LegacyRequest &request, void *shadow, size_t size) {
     if (!ready() || endpoint.interface->isInactive() || endpoint.controller->isInactive())
         return ENXIO;
-    CopyContext context {current_thread(), reinterpret_cast<uintptr_t>(shadow), size, nullptr};
+    CopyContext context {current_thread(), reinterpret_cast<uintptr_t>(shadow), size,
+        endpoint.controller, endpoint.interface,
+        set && isLegacyHostAPWPA2(request.request, static_cast<const uint8_t *>(shadow), size), nullptr};
     IOSimpleLockLock(contextLock);
     context.next = contexts;
     contexts = &context;
     IOSimpleLockUnlock(contextLock);
+    const bool releaseAP = set && endpoint.kind == InterfaceKind::Classic &&
+        (request.request.type == AssociateRequest || request.request.type == 26 ||
+         (request.request.type == PowerRequest && request.request.length <= size &&
+          isNetworkPowerOff(static_cast<const uint8_t *>(shadow), request.request.length)));
+    const bool active = releaseAP && endpoint.interface->getProperty("SimpleBCMHostAPActive") == kOSBooleanTrue;
+    if (active)
+        endpoint.interface->setProperty("SimpleBCMHostAPActive", false);
     const auto result = endpoint.kind == InterfaceKind::Classic ?
         classicCommand(endpoint.interface, endpoint.controller, set ? SetCommand : GetCommand, nullptr, &request.request) :
         (set ? setRequest : getRequest)(endpoint.controller, nullptr,
             endpoint.kind == InterfaceKind::Virtual ? endpoint.interface : nullptr,
             endpoint.kind == InterfaceKind::Skywalk ? endpoint.interface : nullptr, &request);
+    if (result && active)
+        endpoint.interface->setProperty("SimpleBCMHostAPActive", true);
     IOSimpleLockLock(contextLock);
     for (auto cursor = &contexts; *cursor; cursor = &(*cursor)->next) {
         if (*cursor == &context) {
@@ -647,6 +820,45 @@ static bool patchCopies(KernelPatcher &patcher, mach_vm_address_t address, size_
     return true;
 }
 
+static bool patchNetworkPower(KernelPatcher &patcher, mach_vm_address_t address, size_t size) {
+    const auto call = address + LegacyNetworkDisablePowerCall;
+    if (!contains(address, size, call, 5) || *reinterpret_cast<const uint8_t *>(call) != 0xE8)
+        return false;
+    int32_t previous;
+    memcpy(&previous, reinterpret_cast<const void *>(call + 1), sizeof(previous));
+    if (followBranch(call + 5 + previous) != followBranch(reinterpret_cast<uintptr_t>(classicRequest)))
+        return false;
+    const auto target = patcher.branchTarget(reinterpret_cast<uintptr_t>(disableNetworkPower), call + 5);
+    if (!target)
+        return false;
+    const auto delta = static_cast<int64_t>(target - (call + 5));
+    if (delta < INT32_MIN || delta > INT32_MAX)
+        return false;
+    const auto offset = static_cast<int32_t>(delta);
+    memcpy(reinterpret_cast<void *>(call + 1), &offset, sizeof(offset));
+    return true;
+}
+
+static bool patchNetworkCall(KernelPatcher &patcher, mach_vm_address_t address, size_t size, uint32_t offset,
+                             uintptr_t original, uintptr_t replacement) {
+    const auto call = address + offset;
+    if (!contains(address, size, call, 5) || *reinterpret_cast<const uint8_t *>(call) != 0xE8)
+        return false;
+    int32_t previous;
+    memcpy(&previous, reinterpret_cast<const void *>(call + 1), sizeof(previous));
+    if (followBranch(call + 5 + previous) != followBranch(original))
+        return false;
+    const auto target = patcher.branchTarget(replacement, call + 5);
+    if (!target)
+        return false;
+    const auto delta = static_cast<int64_t>(target - (call + 5));
+    if (delta < INT32_MIN || delta > INT32_MAX)
+        return false;
+    const auto displacement = static_cast<int32_t>(delta);
+    memcpy(reinterpret_cast<void *>(call + 1), &displacement, sizeof(displacement));
+    return true;
+}
+
 void Bridge::disable(const char *reason) {
     reject(reason);
 }
@@ -697,8 +909,12 @@ void Bridge::patchImage(KernelPatcher &patcher, size_t index, mach_vm_address_t 
             {"__ZN23IO80211VirtualInterface27IO80211InterfacePostMessageEjPvm", postVirtual, originalVirtualEvent},
             {"__ZN21IO80211InfraInterface19postMessageInternalEjPvm", postInfra, originalInfraEvent},
             {"__ZN16IO80211Interface25updateCountryCodePropertyEb", updateCountryProperty, originalCountryProperty},
+            {"__ZL22setIBSS_Or_HostAP_ModeP17IO80211ControllerP16IO80211InterfaceP23IO80211VirtualInterfaceP21IO80211InfraInterfaceP13apple80211reqb",
+             setNetworkMode, originalNetworkModeSet},
         };
-        if (!patcher.routeMultipleLong(index, routes, address, size) || !patchCopies(patcher, address, size, LegacyCopySites, arrsize(LegacyCopySites))) {
+        if (!patcher.routeMultipleLong(index, routes, address, size) ||
+            !patchCopies(patcher, address, size, LegacyCopySites, arrsize(LegacyCopySites)) ||
+            !patchNetworkPower(patcher, address, size)) {
             patcher.clearError();
             reject("LegacyRoutingFailed");
             return;
@@ -712,6 +928,43 @@ void Bridge::patchImage(KernelPatcher &patcher, size_t index, mach_vm_address_t 
         const auto copyCount = original ? arrsize(AirPortOriginalCopySites) : arrsize(AirPortCopySites);
         if (!validate(address, size, guards, guardCount)) {
             reject(original ? "OriginalAirPortBinaryMismatch" : "TahoeAirPortBinaryMismatch");
+            return;
+        }
+        originalCipherKeySet = reinterpret_cast<CipherKeySet>(patcher.solveSymbol(index,
+            "__ZN15AirPort_BrcmNIC13setCIPHER_KEYEP8OSObjectP14apple80211_key"));
+        setIovar = reinterpret_cast<IovarSet>(patcher.solveSymbol(index,
+            "__ZN15AirPort_BrcmNIC13wlIovarSetIntEPKci"));
+        sendFirmwareRequest = reinterpret_cast<FirmwareRequest>(patcher.solveSymbol(index,
+            "__ZN15AirPort_BrcmNIC7wlIoctlEjPvmbP8OSObject"));
+        originalCipherCalculate = reinterpret_cast<CipherCalculate>(patcher.solveSymbol(index,
+            "__ZN15AirPort_BrcmNIC12wl_calc_wsecEP8OSObject"));
+        firmwareVirtualInterface = reinterpret_cast<VirtualFirmwareInterface>(patcher.solveSymbol(index,
+            "__ZNK15AirPort_BrcmNIC9getVirtIfEP8OSObject"));
+        firmwareBSS = reinterpret_cast<FirmwareBSS>(patcher.solveSymbol(index, "_wlc_bsscfg_find_by_wlcif"));
+        createAuthenticator = reinterpret_cast<AuthenticatorCreate>(patcher.solveSymbol(index, "_wlc_authenticator_attach"));
+        setAKMPolicy = reinterpret_cast<AKMPolicySet>(patcher.solveSymbol(index, "_wlc_sae_process_akm_type"));
+        originalAPSSIDSet = reinterpret_cast<APSSIDSet>(patcher.solveSymbol(index,
+            "__ZN15AirPort_BrcmNIC7setSSIDEP8OSObjectP20apple80211_ssid_data"));
+        originalHardwareAddressSet = reinterpret_cast<HardwareAddressSet>(patcher.solveSymbol(index,
+            "__ZN15AirPort_BrcmNIC18setHardwareAddressEPK17IOEthernetAddress"));
+        if (!originalCipherKeySet || !setIovar || !sendFirmwareRequest || !originalCipherCalculate ||
+            !firmwareVirtualInterface || !firmwareBSS || !createAuthenticator || !setAKMPolicy ||
+            !originalAPSSIDSet || !originalHardwareAddressSet ||
+            !patchNetworkCall(patcher, address, size,
+                original ? AirPortOriginalNetworkCipherCall : AirPortNetworkCipherCall,
+                reinterpret_cast<uintptr_t>(originalCipherKeySet), reinterpret_cast<uintptr_t>(installNetworkCipher)) ||
+            !patchNetworkCall(patcher, address, size,
+                original ? AirPortOriginalNetworkSSIDCipherCall : AirPortNetworkSSIDCipherCall,
+                reinterpret_cast<uintptr_t>(originalCipherCalculate), reinterpret_cast<uintptr_t>(calculateNetworkCipher))) {
+            patcher.clearError();
+            reject("NetworkCipherRoutingFailed");
+            return;
+        }
+        if (!patchNetworkCall(patcher, address, size,
+            original ? AirPortOriginalNetworkAPSSIDCall : AirPortNetworkAPSSIDCall,
+            reinterpret_cast<uintptr_t>(originalAPSSIDSet), reinterpret_cast<uintptr_t>(setNetworkAPSSID))) {
+            patcher.clearError();
+            reject("NetworkAPSSIDRoutingFailed");
             return;
         }
         if (!patchCopies(patcher, address, size, copies, copyCount)) {
