@@ -685,8 +685,12 @@
           "symbol": "_wlc_sae_process_akm_type"
         },
         {
-          "address": "0x38b96",
-          "symbol": "__ZN15AirPort_BrcmNIC18setHardwareAddressEPK17IOEthernetAddress"
+          "address": "0x113078",
+          "symbol": "_wlc_validate_mac_pub"
+        },
+        {
+          "address": "0x113082",
+          "symbol": "_wlc_validate_mac"
         },
         {
           "address": "0x38538",
@@ -715,10 +719,6 @@
         {
           "address": "0x3b4c9",
           "symbol": "SSID encryption calculation"
-        },
-        {
-          "address": "0x4613a",
-          "symbol": "HostAP SSID setting and MAC synchronization"
         }
       ],
       "copySites": [
@@ -733,7 +733,6 @@
       ],
       "networkCipherCall": "0x45ff4",
       "networkSSIDCipherCall": "0x3b4c9",
-      "networkAPSSIDCall": "0x4613a",
       "rejectsOtherBackendAt": [
         "0x1affb",
         "0x2c1ae8",
@@ -816,8 +815,12 @@
           "symbol": "_wlc_sae_process_akm_type"
         },
         {
-          "address": "0x38b96",
-          "symbol": "__ZN15AirPort_BrcmNIC18setHardwareAddressEPK17IOEthernetAddress"
+          "address": "0x113078",
+          "symbol": "_wlc_validate_mac_pub"
+        },
+        {
+          "address": "0x113082",
+          "symbol": "_wlc_validate_mac"
         },
         {
           "address": "0x38538",
@@ -846,10 +849,6 @@
         {
           "address": "0x3b4c9",
           "symbol": "SSID encryption calculation"
-        },
-        {
-          "address": "0x4613a",
-          "symbol": "HostAP SSID setting and MAC synchronization"
         }
       ],
       "copySites": [
@@ -864,7 +863,6 @@
       ],
       "networkCipherCall": "0x45ff4",
       "networkSSIDCipherCall": "0x3b4c9",
-      "networkAPSSIDCall": "0x4613a",
       "rejectsOtherBackendAt": [
         "0x1affb",
         "0x2c1ae8",

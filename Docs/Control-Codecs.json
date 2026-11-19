@@ -547,14 +547,16 @@
         "behavior": "Use Open System authentication and clear the incompatible mandatory-MFP policy"
       },
       "APMACSynchronization": {
-        "scope": "Enabled, up primary AP BSS after successful original HostAP SSID setting",
+        "scope": "Validated bridge endpoint after successful HostAP dispatch; active controller interface reconfiguration and deferred event/status maintenance",
         "BSSIDOffset": 232,
         "currentMACOffset": 238,
-        "setter": "__ZN15AirPort_BrcmNIC18setHardwareAddressEPK17IOEthernetAddress",
+        "setter": "_wlc_validate_mac_pub",
         "receiveFilter": "_wlc_set_mac",
-        "behavior": "Use original hardware setter when receive MAC differs from advertised BSSID; verify equality",
+        "behavior": "Use original MAC validation to update public/BSS addresses and hardware cache, with native MAC suspension and receive-filter programming",
+        "maintenance": "Check active primary AP address equality under the controller workloop after events and during existing status updates; write only on mismatch",
+        "powerScope": "Skip inactive controllers, sleeping/power-transition devices and down AP BSS configurations",
         "invalidAddress": "Reject zero or multicast BSSID and non-primary BSS without writing hardware",
-        "failure": "Return EIO to the original HostAP caller"
+        "failure": "Return synchronization errors and retry while active; preserve accepted asynchronous HostAP startup"
       },
       "unsupportedProfiles": "Reject before mutation; no implicit open-network fallback",
       "explicitOpen": "Preserved; no AES or PMK installation",
@@ -571,8 +573,7 @@
           "SSIDCipherCall": "0x3b4c9",
           "firmwareRequest": "0x38394",
           "SAEPolicyReset": "0x11374",
-          "APSSIDCall": "0x4613a",
-          "hardwareMACSetter": "0x38b96",
+          "MACValidator": "0x113078",
           "receiveMACSetter": "0x1123e1",
           "BSSIDSetter": "0x11243a"
         },
@@ -587,8 +588,7 @@
           "SSIDCipherCall": "0x3b4c9",
           "firmwareRequest": "0x38394",
           "SAEPolicyReset": "0x11374",
-          "APSSIDCall": "0x4613a",
-          "hardwareMACSetter": "0x38b96",
+          "MACValidator": "0x113078",
           "receiveMACSetter": "0x1123e1",
           "BSSIDSetter": "0x11243a"
         }
@@ -598,7 +598,7 @@
     "powerPreservation": {
       "networkDisableCall": "0x8f4b9",
       "systemPowerTransitionOffset": 1016,
-      "owner": "Successful Classic HostAP start",
+      "owner": "Controller of a successful bridged primary HostAP start",
       "scope": "Retain radio for network-interface disable while HostAP is active",
       "release": "HostAP stop, association, explicit mode change, radio off, system power transition or termination"
     },

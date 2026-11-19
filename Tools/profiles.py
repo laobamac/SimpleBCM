@@ -34,7 +34,7 @@ NETWORK_IOVAR_SYMBOL = "__ZN15AirPort_BrcmNIC13wlIovarSetIntEPKci"
 NETWORK_FIRMWARE_SYMBOL = "__ZN15AirPort_BrcmNIC7wlIoctlEjPvmbP8OSObject"
 NETWORK_CALCULATE_SYMBOL = "__ZN15AirPort_BrcmNIC12wl_calc_wsecEP8OSObject"
 NETWORK_SSID_SYMBOL = "__ZN15AirPort_BrcmNIC7setSSIDEP8OSObjectP20apple80211_ssid_data"
-NETWORK_MAC_SYMBOL = "__ZN15AirPort_BrcmNIC18setHardwareAddressEPK17IOEthernetAddress"
+NETWORK_MAC_SYMBOL = "_wlc_validate_mac_pub"
 NETWORK_AUTHENTICATOR_SYMBOL = "_wlc_authenticator_attach"
 SYMBOLS = {
     "Legacy": [
@@ -66,7 +66,7 @@ SYMBOLS = {
                 NETWORK_FIRMWARE_SYMBOL, NETWORK_CALCULATE_SYMBOL, NETWORK_SSID_SYMBOL,
                 NETWORK_AUTHENTICATOR_SYMBOL,
                 "__ZNK15AirPort_BrcmNIC9getVirtIfEP8OSObject", "_wlc_bsscfg_find_by_wlcif", "_wlc_sae_process_akm_type",
-                NETWORK_MAC_SYMBOL],
+                NETWORK_MAC_SYMBOL, "_wlc_validate_mac"],
 }
 SYMBOLS["AirPortOriginal"] = SYMBOLS["AirPort"]
 HARDWARE_VERSION_SYMBOL = "__ZN15AirPort_BrcmNIC19getHARDWARE_VERSIONEP8OSObjectP23apple80211_version_data"
@@ -164,21 +164,6 @@ def network_ssid_cipher_site(image):
         binary.close()
 
 
-def network_ap_ssid_site(image):
-    from native_abi import Mach, insns
-
-    binary = Mach(image.path)
-    try:
-        start, body = binary.funcbytes(HOST_AP_SYMBOL)
-        calls = [address for address, _, _, raw in insns(body, start)
-                 if len(raw) == 5 and raw[0] == 0xE8 and
-                 address + 5 + struct.unpack_from('<i', raw, 1)[0] == binary.names[NETWORK_SSID_SYMBOL][4]]
-        assert calls == [0x4613A]
-        return calls[0]
-    finally:
-        binary.close()
-
-
 def main():
     lines = ["//", "//  Profiles.hpp", "//  SimpleBCM", "//", "//  Created by laobamac on 2026/9/15.", "//  Copyright © 2026 laobamac. All rights reserved.", "//", "", "#ifndef SIMPLEBCM_PROFILES_HPP", "#define SIMPLEBCM_PROFILES_HPP", "", "#include <stdint.h>", "", "namespace bcm {", "struct ByteGuard { uint32_t offset; uint8_t bytes[32]; uint8_t mask[32]; };", "struct CopySite { uint32_t offset; bool output; };", ""]
     manifest = {"copyright": "Copyright © 2026 laobamac. All rights reserved.", "supportedKernel": "23.x / 24.x / 25.x", "images": {}}
@@ -225,9 +210,6 @@ def main():
             ssid_cipher_call = network_ssid_cipher_site(image)
             guards.append((ssid_cipher_call, 'SSID encryption calculation'))
             lines.append(f'static constexpr uint32_t {label}NetworkSSIDCipherCall = 0x{ssid_cipher_call:X};')
-            ap_ssid_call = network_ap_ssid_site(image)
-            guards.append((ap_ssid_call, 'HostAP SSID setting and MAC synchronization'))
-            lines.append(f'static constexpr uint32_t {label}NetworkAPSSIDCall = 0x{ap_ssid_call:X};')
         lines.append(f"static const ByteGuard {label}Guards[] = {{")
         for address, _ in guards:
             mask = bytearray([255] * 32)
@@ -251,7 +233,6 @@ def main():
         if label.startswith('AirPort'):
             manifest['images'][label]['networkCipherCall'] = hex(cipher_call)
             manifest['images'][label]['networkSSIDCipherCall'] = hex(ssid_cipher_call)
-            manifest['images'][label]['networkAPSSIDCall'] = hex(ap_ssid_call)
     for label, other in [("AirPort", "AirPortOriginal"), ("AirPortOriginal", "AirPort")]:
         image, alternative = Image(IMAGES[label]), Image(IMAGES[other])
         relocs = relocations(image) + relocations(alternative)

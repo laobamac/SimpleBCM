@@ -228,10 +228,9 @@ static VirtualFirmwareInterface firmwareVirtualInterface;
 static FirmwareBSS firmwareBSS;
 static AuthenticatorCreate createAuthenticator;
 static AKMPolicySet setAKMPolicy;
-using APSSIDSet = int (*)(IOService *, OSObject *, void *);
-static APSSIDSet originalAPSSIDSet;
-using HardwareAddressSet = IOReturn (*)(IOService *, const void *);
-static HardwareAddressSet originalHardwareAddressSet;
+using MACValidate = int (*)(void *, void *, const void *);
+static MACValidate validateNetworkMAC;
+static IOReturn maintainNetworkMAC(OSObject *, void *, void *, void *, void *);
 
 using NetworkModeSet = int (*)(IOService *, IOService *, IOService *, IOService *, Request *, bool);
 static NetworkModeSet originalNetworkModeSet;
@@ -240,14 +239,7 @@ static int setNetworkMode(IOService *controller, IOService *classic, IOService *
                           IOService *infra, Request *request, bool wide) {
     if (!request || !allowLegacyNetworkMode(*request))
         return EINVAL;
-    const bool active = classic && classic->getProperty("SimpleBCMHostAPActive") == kOSBooleanTrue;
-    if (classic)
-        classic->setProperty("SimpleBCMHostAPActive", false);
-    const auto result = originalNetworkModeSet(controller, classic, virtualInterface, infra, request, wide);
-    if (classic)
-        classic->setProperty("SimpleBCMHostAPActive", result ? active :
-            request->type == HostAPModeRequest && request->value == NetworkModeStart);
-    return result;
+    return originalNetworkModeSet(controller, classic, virtualInterface, infra, request, wide);
 }
 
 static int disableNetworkPower(IOService *controller, uint32_t command, int request,
@@ -255,7 +247,7 @@ static int disableNetworkPower(IOService *controller, uint32_t command, int requ
     if (command == LegacyDriverSetCommand && request == PowerRequest && controller && interface &&
         !controller->isInactive() && !interface->isInactive() &&
         controller->metaCast("AirPort_BrcmNIC") &&
-        preserveNetworkModePower(interface->getProperty("SimpleBCMHostAPActive") == kOSBooleanTrue,
+        preserveNetworkModePower(controller->getProperty("SimpleBCMHostAPActive") == kOSBooleanTrue,
             __atomic_load_n(reinterpret_cast<const uint8_t *>(controller) + LegacySystemPowerTransitionOffset,
                             __ATOMIC_ACQUIRE) != 0 ||
             __atomic_load_n(reinterpret_cast<const uint8_t *>(controller) + 6816, __ATOMIC_ACQUIRE) != 0 ||
@@ -264,13 +256,15 @@ static int disableNetworkPower(IOService *controller, uint32_t command, int requ
             static_cast<const uint8_t *>(payload), PowerDataSize)) {
         uint8_t power[PowerDataSize] {};
         if (!classicRequest(controller, LegacyDriverGetCommand, PowerRequest, interface, power) &&
-            isNetworkPowerOn(power, sizeof(power)))
+            isNetworkPowerOn(power, sizeof(power))) {
+            maintainNetworkMAC(controller, nullptr, nullptr, nullptr, nullptr);
             return 0;
+        }
     }
     const auto result = classicRequest(controller, command, request, interface, payload);
-    if (!result && interface && command == LegacyDriverSetCommand && request == PowerRequest &&
+    if (!result && controller && interface && command == LegacyDriverSetCommand && request == PowerRequest &&
         isNetworkPowerOff(static_cast<const uint8_t *>(payload), PowerDataSize))
-        interface->setProperty("SimpleBCMHostAPActive", false);
+        controller->setProperty("SimpleBCMHostAPActive", false);
     return result;
 }
 
@@ -350,24 +344,14 @@ static int getLocale(IOService *controller, OSObject *, LocaleData *output) {
     return result;
 }
 
-static int setNetworkAPSSID(IOService *controller, OSObject *interface, void *payload) {
-    const auto result = originalAPSSIDSet(controller, interface, payload);
-    if (result)
-        return result;
+static int synchronizeNetworkMAC(IOService *controller) {
     void *wlc;
     memcpy(&wlc, reinterpret_cast<const uint8_t *>(controller) + 2576, sizeof(wlc));
     if (!wlc)
-        return result;
-    const auto virtualInterface = firmwareVirtualInterface(controller, interface);
-    void *wlcif = nullptr;
-    if (virtualInterface)
-        memcpy(&wlcif, static_cast<const uint8_t *>(virtualInterface) + 544, sizeof(wlcif));
-    const auto configuration = static_cast<const uint8_t *>(firmwareBSS(wlc, wlcif));
-    if (!configuration || !configuration[8] || !configuration[9] || !configuration[10] ||
-        !memcmp(configuration + 232, configuration + 238, 6))
-        return result;
-    if (configuration != firmwareBSS(wlc, nullptr))
-        return EIO;
+        return ENXIO;
+    auto configuration = static_cast<uint8_t *>(firmwareBSS(wlc, nullptr));
+    if (!configuration || !configuration[8] || !configuration[9] || !configuration[10])
+        return EINVAL;
     uint8_t address[6];
     memcpy(address, configuration + 232, sizeof(address));
     uint8_t nonzero = 0;
@@ -375,10 +359,34 @@ static int setNetworkAPSSID(IOService *controller, OSObject *interface, void *pa
         nonzero |= octet;
     if (!nonzero || (address[0] & 1U))
         return EIO;
-    if (originalHardwareAddressSet(controller, address) != kIOReturnSuccess ||
-        memcmp(configuration + 232, configuration + 238, sizeof(address)))
+    if (validateNetworkMAC(wlc, configuration, address))
         return EIO;
-    return result;
+    configuration = static_cast<uint8_t *>(firmwareBSS(wlc, nullptr));
+    if (!configuration || !configuration[8] || !configuration[9] || !configuration[10] ||
+        memcmp(address, configuration + 232, sizeof(address)) ||
+        memcmp(address, configuration + 238, sizeof(address)))
+        return EIO;
+    return 0;
+}
+
+static IOReturn maintainNetworkMAC(OSObject *owner, void *, void *, void *, void *) {
+    auto controller = static_cast<IOService *>(owner);
+    if (controller->isInactive() || controller->getProperty("SimpleBCMHostAPActive") != kOSBooleanTrue)
+        return kIOReturnSuccess;
+    const auto bytes = reinterpret_cast<const uint8_t *>(controller);
+    if (__atomic_load_n(bytes + LegacySystemPowerTransitionOffset, __ATOMIC_ACQUIRE) ||
+        __atomic_load_n(bytes + 6816, __ATOMIC_ACQUIRE) ||
+        __atomic_load_n(reinterpret_cast<const uint64_t *>(bytes + 6800), __ATOMIC_ACQUIRE) != 2)
+        return kIOReturnSuccess;
+    void *wlc;
+    memcpy(&wlc, bytes + 2576, sizeof(wlc));
+    if (!wlc)
+        return kIOReturnSuccess;
+    const auto configuration = static_cast<const uint8_t *>(firmwareBSS(wlc, nullptr));
+    if (!configuration || !configuration[8] || !configuration[9] || !configuration[10] ||
+        !memcmp(configuration + 232, configuration + 238, 6))
+        return kIOReturnSuccess;
+    return synchronizeNetworkMAC(controller) ? kIOReturnIOError : kIOReturnSuccess;
 }
 
 static IOReturn updateCountryProperties(OSObject *target, void *argument, void *logging, void *, void *) {
@@ -557,6 +565,9 @@ static void drainEvents(thread_call_param_t, thread_call_param_t) {
             }
         }
         IOSimpleLockUnlockEnableInterrupt(hubLock, interruptState);
+        auto controllerLoop = event.controller->getWorkLoop();
+        if (controllerLoop && event.controller->getProperty("SimpleBCMHostAPActive") == kOSBooleanTrue)
+            controllerLoop->runAction(maintainNetworkMAC, event.controller);
         if (event.interface) {
             auto loop = event.controller->getWorkLoop();
             if (loop)
@@ -707,20 +718,25 @@ int Bridge::command(const Endpoint &endpoint, bool set, LegacyRequest &request, 
     context.next = contexts;
     contexts = &context;
     IOSimpleLockUnlock(contextLock);
-    const bool releaseAP = set && endpoint.kind == InterfaceKind::Classic &&
-        (request.request.type == AssociateRequest || request.request.type == 26 ||
+    const bool startAP = set && request.request.type == HostAPModeRequest && request.request.value == NetworkModeStart;
+    const bool releaseAP = set &&
+        (isNetworkModeRequest(request.request.type) || request.request.type == AssociateRequest || request.request.type == 26 ||
          (request.request.type == PowerRequest && request.request.length <= size &&
           isNetworkPowerOff(static_cast<const uint8_t *>(shadow), request.request.length)));
-    const bool active = releaseAP && endpoint.interface->getProperty("SimpleBCMHostAPActive") == kOSBooleanTrue;
+    const bool active = releaseAP && endpoint.controller->getProperty("SimpleBCMHostAPActive") == kOSBooleanTrue;
     if (active)
-        endpoint.interface->setProperty("SimpleBCMHostAPActive", false);
+        endpoint.controller->setProperty("SimpleBCMHostAPActive", false);
     const auto result = endpoint.kind == InterfaceKind::Classic ?
         classicCommand(endpoint.interface, endpoint.controller, set ? SetCommand : GetCommand, nullptr, &request.request) :
         (set ? setRequest : getRequest)(endpoint.controller, nullptr,
             endpoint.kind == InterfaceKind::Virtual ? endpoint.interface : nullptr,
             endpoint.kind == InterfaceKind::Skywalk ? endpoint.interface : nullptr, &request);
+    if (!result && startAP) {
+        endpoint.controller->setProperty("SimpleBCMHostAPActive", true);
+        maintainNetworkMAC(endpoint.controller, nullptr, nullptr, nullptr, nullptr);
+    }
     if (result && active)
-        endpoint.interface->setProperty("SimpleBCMHostAPActive", true);
+        endpoint.controller->setProperty("SimpleBCMHostAPActive", true);
     IOSimpleLockLock(contextLock);
     for (auto cursor = &contexts; *cursor; cursor = &(*cursor)->next) {
         if (*cursor == &context) {
@@ -943,13 +959,10 @@ void Bridge::patchImage(KernelPatcher &patcher, size_t index, mach_vm_address_t 
         firmwareBSS = reinterpret_cast<FirmwareBSS>(patcher.solveSymbol(index, "_wlc_bsscfg_find_by_wlcif"));
         createAuthenticator = reinterpret_cast<AuthenticatorCreate>(patcher.solveSymbol(index, "_wlc_authenticator_attach"));
         setAKMPolicy = reinterpret_cast<AKMPolicySet>(patcher.solveSymbol(index, "_wlc_sae_process_akm_type"));
-        originalAPSSIDSet = reinterpret_cast<APSSIDSet>(patcher.solveSymbol(index,
-            "__ZN15AirPort_BrcmNIC7setSSIDEP8OSObjectP20apple80211_ssid_data"));
-        originalHardwareAddressSet = reinterpret_cast<HardwareAddressSet>(patcher.solveSymbol(index,
-            "__ZN15AirPort_BrcmNIC18setHardwareAddressEPK17IOEthernetAddress"));
+        validateNetworkMAC = reinterpret_cast<MACValidate>(patcher.solveSymbol(index, "_wlc_validate_mac_pub"));
         if (!originalCipherKeySet || !setIovar || !sendFirmwareRequest || !originalCipherCalculate ||
             !firmwareVirtualInterface || !firmwareBSS || !createAuthenticator || !setAKMPolicy ||
-            !originalAPSSIDSet || !originalHardwareAddressSet ||
+            !validateNetworkMAC ||
             !patchNetworkCall(patcher, address, size,
                 original ? AirPortOriginalNetworkCipherCall : AirPortNetworkCipherCall,
                 reinterpret_cast<uintptr_t>(originalCipherKeySet), reinterpret_cast<uintptr_t>(installNetworkCipher)) ||
@@ -958,13 +971,6 @@ void Bridge::patchImage(KernelPatcher &patcher, size_t index, mach_vm_address_t 
                 reinterpret_cast<uintptr_t>(originalCipherCalculate), reinterpret_cast<uintptr_t>(calculateNetworkCipher))) {
             patcher.clearError();
             reject("NetworkCipherRoutingFailed");
-            return;
-        }
-        if (!patchNetworkCall(patcher, address, size,
-            original ? AirPortOriginalNetworkAPSSIDCall : AirPortNetworkAPSSIDCall,
-            reinterpret_cast<uintptr_t>(originalAPSSIDSet), reinterpret_cast<uintptr_t>(setNetworkAPSSID))) {
-            patcher.clearError();
-            reject("NetworkAPSSIDRoutingFailed");
             return;
         }
         if (!patchCopies(patcher, address, size, copies, copyCount)) {
@@ -1045,6 +1051,9 @@ void Bridge::publish(IOService *service) {
         IOSimpleLockUnlockEnableInterrupt(hubLock, interruptState);
     }
     if (controller) {
+        auto controllerLoop = controller->getWorkLoop();
+        if (controllerLoop && controller->getProperty("SimpleBCMHostAPActive") == kOSBooleanTrue)
+            controllerLoop->runAction(maintainNetworkMAC, controller);
         service->setProperty("WirelessControllerIdentity", controller->metaCast("AirPortDriver") ? "AirPortDriver" : "Unrecognized");
         auto bytes = reinterpret_cast<const uint8_t *>(controller);
         service->setProperty("BrcmPowerState", __atomic_load_n(reinterpret_cast<const uint64_t *>(bytes + 6800), __ATOMIC_RELAXED), 64);

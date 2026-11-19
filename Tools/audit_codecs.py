@@ -14,7 +14,7 @@ import struct
 from pathlib import Path
 
 from macho import Image
-from profiles import IMAGES, ROOT, SCALAR_GET_REQUESTS, NETWORK_MODE_SYMBOL, NETWORK_CIPHER_SYMBOL, NETWORK_IOVAR_SYMBOL, NETWORK_FIRMWARE_SYMBOL, NETWORK_MAC_SYMBOL, relocations, network_power_sites, network_cipher_site, network_ssid_cipher_site, network_ap_ssid_site
+from profiles import IMAGES, ROOT, SCALAR_GET_REQUESTS, NETWORK_MODE_SYMBOL, NETWORK_CIPHER_SYMBOL, NETWORK_IOVAR_SYMBOL, NETWORK_FIRMWARE_SYMBOL, NETWORK_MAC_SYMBOL, relocations, network_power_sites, network_cipher_site, network_ssid_cipher_site
 
 
 def audit_native_network_modes():
@@ -93,19 +93,24 @@ def audit_network_security():
                                 'SSIDCipherCall': hex(network_ssid_cipher_site(Image(IMAGES[label]))),
                                 'firmwareRequest': hex(binary.names[NETWORK_FIRMWARE_SYMBOL][4])}
             consumers[label]['SAEPolicyReset'] = hex(policy)
-            consumers[label]['APSSIDCall'] = hex(network_ap_ssid_site(Image(IMAGES[label])))
             setter, data = binary.funcbytes(NETWORK_MAC_SYMBOL)
-            assert len(data) == 202
-            rows = [text for _, _, text, _ in insns(data, setter)]
-            for pattern in (r'movl\s+\$6,\s*%r9d', r'callq\s+\*3656\(%rax\)', r'pushq\s+\$1', r'pushq\s+\$0'):
+            assert len(data) == 10
+            validator, data = binary.funcbytes('_wlc_validate_mac')
+            rows = [text for _, _, text, _ in insns(data, validator)]
+            for pattern in (r'cmpq\s+%rsi,\s*832\(%rdi\)', r'movl\s+%ecx,\s*8\(%rax\)',
+                            r'movl\s+%eax,\s*238\(%r14\)'):
                 assert any(re.fullmatch(pattern, text) for text in rows)
+            calls = [address + 5 + struct.unpack_from('<i', raw, 1)[0]
+                     for address, _, _, raw in insns(data, validator) if len(raw) == 5 and raw[0] == 0xE8]
+            for name in ('_wlc_bmac_set_hw_etheraddr', '_wlc_bmac_suspend_mac_and_wait', '_wlc_set_mac', '_wlc_bmac_enable_mac'):
+                assert binary.names[name][4] in calls
             ra, data = binary.funcbytes('_wlc_set_mac')
             rows = [text for _, _, text, _ in insns(data, ra)]
             for pattern in (r'cmpq\s+%rdi,\s*832\(%rbx\)', r'addq\s+\$238,\s*%rdx', r'movl\s+\$32776,\s*%ecx'):
                 assert any(re.fullmatch(pattern, text) for text in rows)
             bssid, data = binary.funcbytes('_wlc_set_bssid')
             assert any(re.fullmatch(r'leaq\s+232\(%rbx\),\s*%rdx', text) for _, _, text, _ in insns(data, bssid))
-            consumers[label]['hardwareMACSetter'] = hex(setter)
+            consumers[label]['MACValidator'] = hex(setter)
             consumers[label]['receiveMACSetter'] = hex(ra)
             consumers[label]['BSSIDSetter'] = hex(bssid)
         finally:
@@ -128,12 +133,14 @@ def audit_network_security():
             'AKMPolicy': {'scope': 'Normalized WPA2 HostAP key installation only',
                           'originalSetter': '_wlc_sae_process_akm_type', 'AKM': 2,
                           'behavior': 'Use Open System authentication and clear the incompatible mandatory-MFP policy'},
-            'APMACSynchronization': {'scope': 'Enabled, up primary AP BSS after successful original HostAP SSID setting',
+            'APMACSynchronization': {'scope': 'Validated bridge endpoint after successful HostAP dispatch; active controller interface reconfiguration and deferred event/status maintenance',
                                      'BSSIDOffset': 232, 'currentMACOffset': 238,
                                      'setter': NETWORK_MAC_SYMBOL, 'receiveFilter': '_wlc_set_mac',
-                                     'behavior': 'Use original hardware setter when receive MAC differs from advertised BSSID; verify equality',
+                                     'behavior': 'Use original MAC validation to update public/BSS addresses and hardware cache, with native MAC suspension and receive-filter programming',
+                                     'maintenance': 'Check active primary AP address equality under the controller workloop after events and during existing status updates; write only on mismatch',
+                                     'powerScope': 'Skip inactive controllers, sleeping/power-transition devices and down AP BSS configurations',
                                      'invalidAddress': 'Reject zero or multicast BSSID and non-primary BSS without writing hardware',
-                                     'failure': 'Return EIO to the original HostAP caller'},
+                                     'failure': 'Return synchronization errors and retry while active; preserve accepted asynchronous HostAP startup'},
             'unsupportedProfiles': 'Reject before mutation; no implicit open-network fallback',
             'explicitOpen': 'Preserved; no AES or PMK installation', 'IBSS': 'Layout conversion only',
             'consumers': consumers,
@@ -213,7 +220,7 @@ def main():
                                       "powerPreservation": {
                                           "networkDisableCall": hex(power_call),
                                           "systemPowerTransitionOffset": transition,
-                                          "owner": "Successful Classic HostAP start",
+                                          "owner": "Controller of a successful bridged primary HostAP start",
                                           "scope": "Retain radio for network-interface disable while HostAP is active",
                                           "release": "HostAP stop, association, explicit mode change, radio off, system power transition or termination"},
                                       "unrepresentableExtensions": "Rejected without changing authentication or encryption"},
