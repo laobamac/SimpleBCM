@@ -24,7 +24,7 @@ from system_profiles import SYSTEMS
 
 OUTPUT = ROOT / 'build/Embedded'
 LABELS = ['Legacy', 'AirPortOriginal', 'AirPort']
-VERSION = '1.2.1'
+VERSION = '1.2.2'
 PAYLOAD_PLISTS = {
     'Legacy': 'e3db7231dce8d4bb5430785ccb6049ef3e329abbac4f6fcbc878a6a3a0792257',
     'AirPortOriginal': '545db395be05d1fa96c98e00fab1c8cacffa13e5f50ca832b6a5a79516d99514',

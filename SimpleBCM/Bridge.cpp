@@ -1115,7 +1115,7 @@ void Bridge::publish(IOService *service) {
     service->setProperty("Status", __atomic_load_n(&failure, __ATOMIC_ACQUIRE));
     service->setProperty("PatchState", __atomic_load_n(&state, __ATOMIC_ACQUIRE), 32);
     service->setProperty("SupportedKernel", "23.x / 24.x / 25.x / 27.x");
-    service->setProperty("AdapterVersion", "1.2.1");
+    service->setProperty("AdapterVersion", "1.2.2");
     service->setProperty("NativePowerDomainPatched", false);
     IOService *controller = nullptr;
     if (hubLock) {

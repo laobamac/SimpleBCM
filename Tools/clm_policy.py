@@ -15,7 +15,7 @@ import struct
 from native_abi import EXPECTED_SOURCES, Mach, PATHS
 
 
-POLICY_VERSION = '1.2.1'
+POLICY_VERSION = '1.2.2'
 POLICIES = (24, 29, 37, 40, 204, 206, 245, 280)
 
 

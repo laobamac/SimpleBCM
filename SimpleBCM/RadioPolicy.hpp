@@ -14,7 +14,7 @@
 
 namespace bcm {
 
-constexpr const char *RadioPolicyVersion = "1.2.1";
+constexpr const char *RadioPolicyVersion = "1.2.2";
 
 class RadioPolicy {
 public:
