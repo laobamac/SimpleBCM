@@ -394,8 +394,8 @@ template<unsigned Kernel> static void boundaries() {
         assert(limited == std::min(capacity, uint16_t(bcm::LegacyScanIECapacity)));
         uint8_t original[bcm::LegacyScanResultSize];
         memcpy(original, buffer, sizeof(original));
-        assert(!bcm::expandScanResult(request, buffer, abi.scanResultSize - 1, abi));
-        assert(bcm::expandScanResult(request, buffer, abi.scanResultSize, abi));
+        assert(!bcm::expandScanResult(request, buffer, abi.scanResultSize - 1, abi.scanResultSize, abi));
+        assert(bcm::expandScanResult(request, buffer, abi.scanResultSize, abi.scanResultSize, abi));
         assert(request.length == abi.scanResultSize);
         assert(!memcmp(original, buffer, sizeof(original)));
         for (size_t offset = sizeof(original); offset < abi.scanResultSize; ++offset)
@@ -700,7 +700,7 @@ static unsigned nativeConsumer() {
         bcm::Request request {};
         request.length = bcm::TahoeABI.scanResultSize;
         assert(bcm::prepareScanResult(request, record, sizeof(record), bcm::TahoeABI));
-        assert(bcm::expandScanResult(request, record, sizeof(record), bcm::TahoeABI));
+        assert(bcm::expandScanResult(request, record, sizeof(record), sizeof(record), bcm::TahoeABI));
         auto first = CFArrayCreateMutable(nullptr, 0, &kCFTypeArrayCallBacks);
         auto second = CFArrayCreateMutable(nullptr, 0, &kCFTypeArrayCallBacks);
         assert(first && second);
@@ -818,7 +818,7 @@ static void profileBoundaries() {
     assert(!bcm::userABIForKernel(22) && !bcm::userABIForKernel(26));
     assert(bcm::userABIForKernel(24)->kernel == 24 && bcm::userABIForKernel(25)->kernel == 25);
     assert(bcm::SequoiaABI.filterMonitorEvents == 0 && bcm::TahoeABI.filterMonitorEvents == 564);
-    for (const auto &abi : {bcm::SonomaABI, bcm::SequoiaABI, bcm::TahoeABI}) {
+    for (const auto &abi : {bcm::SonomaABI, bcm::SequoiaABI, bcm::TahoeABI, bcm::GoldenGateABI}) {
         std::vector<uint8_t> buffer(abi.scanResultSize + 8, 0xA5);
         bcm::Request request {};
         request.length = static_cast<uint32_t>(abi.kernel == 24 ? 0x8E0 : 0x8D8);
@@ -838,6 +838,47 @@ static void profileBoundaries() {
                 assert(buffer[i] == 0);
         }
     }
+    const auto &goldenGate = bcm::GoldenGateABI;
+    for (size_t size : {size_t(0x8CC), size_t(0x8E8)}) {
+        std::vector<uint8_t> record(size + 1, 0xA5);
+        bcm::Request scan {};
+        scan.length = static_cast<uint32_t>(size);
+        record[bcm::ScanIELengthOffset] = 0;
+        record[bcm::ScanIELengthOffset + 1] = 8;
+        assert(bcm::supportsScanResultSize(size, goldenGate));
+        assert(!bcm::supportsScanResultSize(size, bcm::TahoeABI));
+        assert(!bcm::expandScanResult(scan, record.data(), record.size(), size, goldenGate));
+        assert(bcm::prepareScanResult(scan, record.data(), record.size(), goldenGate));
+        assert(scan.length == bcm::LegacyScanResultSize && record[bcm::ScanIELengthOffset + 1] == 4);
+        assert(bcm::expandScanResult(scan, record.data(), record.size(), size, goldenGate));
+        assert(scan.length == size && record[bcm::LegacyScanResultSize - 1] == 0xA5 && record.back() == 0xA5);
+        for (size_t offset = bcm::LegacyScanResultSize; offset < size; ++offset)
+            assert(record[offset] == 0);
+    }
+    std::vector<uint8_t> association(goldenGate.associateSize + 1);
+    association.back() = 0xA5;
+    bcm::Request request {};
+    request.length = static_cast<uint32_t>(goldenGate.associateSize);
+    bcm::writeUInt32(association.data() + 8, 1);
+    bcm::writeUInt32(association.data() + 12, 0x400);
+    association[0x1FB] = 0xB1;
+    association[0x1FC] = 0xCA;
+    association[0x202] = 1;
+    association[0x203] = 0xFE;
+    bcm::writeUInt32(association.data() + 0x240, 4);
+    association[0x244] = 0x42;
+    assert(bcm::prepareAssociate(request, association.data(), association.size(), goldenGate));
+    assert(request.length == 0x224 && association[0x1F7] == 0xB1 && association[0x1FB] == 0);
+    assert(association[0x1FC] == 0xCA && association[0x202] == 1 && association[0x203] == 0xFE);
+    assert(bcm::readUInt32(association.data() + 0x218) == 4 && association[0x21C] == 0x42);
+    assert(association.back() == 0xA5);
+    const uint8_t bssid[] {2, 1, 2, 3, 4, 5};
+    std::vector<uint8_t> join(0x225, 0xA5);
+    assert(!bcm::encodeJoinStatus(2, 1, bssid, sizeof(bssid), join.data(), 0x223, goldenGate));
+    assert(bcm::encodeJoinStatus(2, 1, bssid, sizeof(bssid), join.data(), 0x224, goldenGate));
+    assert(bcm::readUInt32(join.data() + 0x208) == 2 && bcm::readUInt32(join.data() + 0x20C) == 2);
+    assert(bcm::readUInt32(join.data() + 0x214) == 1 && memcmp(join.data() + 0x21C, bssid, sizeof(bssid)) == 0);
+    assert(join.back() == 0xA5);
 }
 
 static void hardwareIdentityVectors() {

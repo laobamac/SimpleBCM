@@ -56,7 +56,8 @@ def main():
         assert config['Kernel']['Block'] == [], 'Native frameworks must remain enabled'
         for entry in config['Kernel']['Add']:
             assert entry['Enabled'] and entry['Arch'] == 'x86_64'
-            assert (entry['MinKernel'], entry['MaxKernel']) == ('23.0.0', '25.99.99')
+            maximum = '' if entry['BundlePath'] == 'SimpleBCM.kext' else '25.99.99'
+            assert (entry['MinKernel'], entry['MaxKernel']) == ('23.0.0', maximum)
         assert plistlib.loads(plistlib.dumps(config)) == config
     for configuration in ('Debug', 'Release'):
         assert package_name(configuration) == f'SimpleBCM-v{VERSION}-{configuration.upper()}'

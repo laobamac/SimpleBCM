@@ -10,7 +10,7 @@
 # SimpleBCM
 
 ![Version](https://img.shields.io/badge/version-1.2.1-2563eb)
-![macOS](https://img.shields.io/badge/macOS-Sonoma%2014%20%7C%20Sequoia%2015%20%7C%20Tahoe%2026-111827)
+![macOS](https://img.shields.io/badge/macOS-Sonoma%2014%20%7C%20Sequoia%2015%20%7C%20Tahoe%2026%20%7C%20GoldenGate%2027-111827)
 ![Architecture](https://img.shields.io/badge/arch-x86__64-6b7280)
 ![OpenCore](https://img.shields.io/badge/boot-OpenCore-16a34a)
 
@@ -18,7 +18,7 @@
 
 </div>
 
-SimpleBCM restores Broadcom Wi-Fi on macOS Sonoma, Sequoia and Tahoe through OpenCore injection. One kext uses each system’s native IOSkywalkFamily without modifying the system volume.
+SimpleBCM restores Broadcom Wi-Fi on macOS Sonoma 14, Sequoia 15, Tahoe 26, and GoldenGate 27 through OpenCore.
 
 ## Installation
 
@@ -27,8 +27,6 @@ SimpleBCM restores Broadcom Wi-Fi on macOS Sonoma, Sequoia and Tahoe through Ope
 3. Merge the packaged `config.fragment.plist`, check with `ocvalidate`, then reboot.
 
 **Remove or disable existing `Kernel → Block` rules for `com.apple.iokit.IOSkywalkFamily`. Keep native IOSkywalkFamily and IO80211Family enabled.**
-
-Supports macOS Sonoma 14, Sequoia 15 and Tahoe 26 without restricting minor versions. Use `MinKernel=23.0.0` and `MaxKernel=25.99.99`.
 
 If AirportBrcmFixup is needed, add Lilu, AirportBrcmFixup and AirPortBrcmNIC_Injector using `Extra/config.AirportBrcmFixup.fragment.plist`.
 

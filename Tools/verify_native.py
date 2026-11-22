@@ -169,7 +169,7 @@ def verify_native(temporary, binary, system='Tahoe'):
     assert profile['ethernetLinkSlot'] == plan.link_slot
     if plan.link_slot != 0xffffffff:
         assert plan.model.new_tables['IOSkywalkEthernetInterface'][plan.link_slot] == plan.link_symbol
-    assert profile['airPortPayloadIndex'] == (2 if plan.profile['kernel'] == 25 else 1)
+    assert profile['airPortPayloadIndex'] == (2 if plan.profile['kernel'] >= 25 else 1)
     assert plan.compat['__ZNK25IOSkywalkPacketBufferPool7releaseEv'] == '_bcmLegacyPoolRelease'
     guards = manifest['nativeRuntimeGuards'][system]
     for meta, size in guards['classes']:
@@ -187,7 +187,7 @@ def verify_native(temporary, binary, system='Tahoe'):
         assert site + 7 + struct.unpack_from('<i', raw, 3)[0] == controller_name
     assert class_size(plan.legacy, 'IO80211Controller') == 1048
     checks.append('Both controller metaclass constructors and the module initializer use AirPortDriver with unchanged storage and class size')
-    generated = (ROOT / ('build/Embedded/' + ('AirPort' if plan.profile['kernel'] == 25 else 'AirPortOriginal') + '.bin')).read_bytes()
+    generated = (ROOT / ('build/Embedded/' + ('AirPort' if plan.profile['kernel'] >= 25 else 'AirPortOriginal') + '.bin')).read_bytes()
     original_power = plan.air.read(plan.power_template, 288)
     assert generated[plan.power_template:plan.power_template + 288] == original_power
     native_states = plan.native.read(plan.native.names['__ZL13myPowerStates'][4], 192)

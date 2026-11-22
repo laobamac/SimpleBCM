@@ -7,6 +7,7 @@
 //
 
 #include "Bridge.hpp"
+#include "EAPOLOverlay.hpp"
 #include "Loader.hpp"
 #include <IOKit/IOTimerEventSource.h>
 #include <IOKit/IOWorkLoop.h>
@@ -112,6 +113,7 @@ private:
     void update() {
         bcm::Bridge::publish(this);
         bcm::publishLoader(this);
+        bcm::publishEAPOLOverlay(this);
         setProperty("LoadDelayMS", loadDelayMS, 32);
         setProperty("LoadDelayState", loadDelayState);
     }
@@ -148,7 +150,8 @@ extern "C" kern_return_t SimpleBCM_kern_start(kmod_info_t *, void *) {
     if (enabled) {
         initialized = true;
         loadDelayMS = readLoadDelay();
-        bcm::preparePayloads();
+        if (bcm::preparePayloads())
+            bcm::prepareEAPOLOverlay();
     }
     return KERN_SUCCESS;
 }

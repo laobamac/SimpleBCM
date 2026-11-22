@@ -7,6 +7,7 @@
 #  Copyright © 2026 laobamac. All rights reserved.
 #
 
+import gzip
 import hashlib
 import json
 import plistlib
@@ -14,7 +15,7 @@ import re
 import struct
 import subprocess
 
-from bootstrap import ROOT, validate_payloads
+from bootstrap import ROOT
 from macho import Image
 from profiles import IMAGES, SYMBOLS, HARDWARE_VERSION_SYMBOL, ROUTE_SYMBOLS
 from native_payload import SkywalkPlan, emit_system_profiles, prepare_native_guards
@@ -24,6 +25,11 @@ from system_profiles import SYSTEMS
 OUTPUT = ROOT / 'build/Embedded'
 LABELS = ['Legacy', 'AirPortOriginal', 'AirPort']
 VERSION = '1.2.1'
+PAYLOAD_PLISTS = {
+    'Legacy': 'e3db7231dce8d4bb5430785ccb6049ef3e329abbac4f6fcbc878a6a3a0792257',
+    'AirPortOriginal': '545db395be05d1fa96c98e00fab1c8cacffa13e5f50ca832b6a5a79516d99514',
+    'AirPort': '545db395be05d1fa96c98e00fab1c8cacffa13e5f50ca832b6a5a79516d99514',
+}
 ALIASES = {
     '__ZN26IOSkywalkEthernetInterface18getHardwareAddressEP12ether_addr_t':
         '__ZN26IOSkywalkEthernetInterface18getHardwareAddressEP10ether_addr',
@@ -119,7 +125,6 @@ def route_prefixes(image, label):
 
 
 def generate():
-    validate_payloads()
     plans = [SkywalkPlan(system) for system in SYSTEMS]
     plan = plans[-1]
     for candidate in plans:
@@ -131,6 +136,9 @@ def generate():
             if candidate.model.tables[cls] != plan.model.tables[cls]:
                 raise ValueError('Packet implementation differs across systems: ' + cls)
     OUTPUT.mkdir(parents=True, exist_ok=True)
+    for name in ('EAPOLPayload.hpp', 'EAPOLKernelABI.hpp'):
+        payload = ROOT / 'Resources/GoldenGate' / (name + '.gz')
+        (OUTPUT / name).write_bytes(gzip.decompress(payload.read_bytes()))
     from clm_policy import generate_policy
     generate_policy(OUTPUT)
     from tahoe_dma import generate_dma
@@ -206,7 +214,10 @@ def generate():
     for index, (label, image, (commands, symbols)) in enumerate(zip(LABELS, images, parsed)):
         logical_index = int(index != 0)
         image_plan = plans[0] if label == 'AirPortOriginal' else plan
-        info = plistlib.loads((image.path.parent.parent / 'Info.plist').read_bytes())
+        plist_data = (image.path.parent.parent / 'Info.plist').read_bytes()
+        if hashlib.sha256(plist_data).hexdigest() != PAYLOAD_PLISTS[label]:
+            raise ValueError(f'Unsupported payload metadata: {label}')
+        info = plistlib.loads(plist_data)
         library_ids.add(info['CFBundleIdentifier'])
         for library, version in info['OSBundleLibraries'].items():
             library_versions.setdefault(library, set()).add(version)
@@ -342,7 +353,8 @@ def generate():
     stored_size = sum(p['storage']['storedSize'] for p in manifest['payloads'])
     manifest['payloadStorage'] = {'format': 'shared-base-delta-v1', 'expandedBytes': expanded_size,
                                   'storedBytes': stored_size, 'savedBytes': expanded_size - stored_size}
-    cpp += ['const Payload payloads[3] = {', ',\n'.join(descriptors), '};',
+    cpp += ['const Payload payloads[3] = {', descriptors[0] + ',', descriptors[1] + ',',
+            descriptors[2], '};',
             f'const uint32_t nativeImportCount = {len(native)};', 'const char *const nativeImportNames[] = {',
             ',\n'.join(json.dumps(n) for n in native), '};',
             'const NativeVtableGuard nativeVtableGuards[] = {',

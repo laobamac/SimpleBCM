@@ -16,4 +16,6 @@ Copyright © 2026 laobamac. All rights reserved. Third-party components retain t
 - [AirportBrcmFixup](https://github.com/acidanthera/AirportBrcmFixup) and its injector retain their upstream license and copyright.
 - [Apple configd](https://github.com/apple-oss-distributions/configd) was consulted to verify SystemConfiguration interface classification. Its source is an offline research reference and is not compiled or distributed in the driver.
 
+- The GoldenGate overlay includes Apple’s [EAP8021X controller](https://github.com/apple-oss-distributions/eap8021x/tree/89340102f408cbac3d6703fb56e0c5ee8755b01f) under its original license, the corresponding GoldenGate bundle resources and the original signed `awdl_d2d.bundle` from macOS 26.7.3.
+
 Dependency revisions and archive hashes are pinned in `Tools/bootstrap.py`. Build preparation verifies the upstream revisions, archive hashes, and extracted bytes. Local dependency checkouts, build output, and distribution packages are excluded from the source repository.

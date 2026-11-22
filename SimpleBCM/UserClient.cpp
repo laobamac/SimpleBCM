@@ -281,7 +281,7 @@ IOReturn BCM80211UserClient::runCommand(IOExternalMethodArguments *arguments, si
     const bool get = header->command == bcm::GetCommand;
     const auto &abi = bcm::Bridge::abi();
     const bool scalar = get && bcm::Bridge::isScalarGet(static_cast<uint32_t>(request));
-    const bool scanResult = get && request == bcm::ScanResultRequest && outputSize == abi.scanResultSize;
+    const bool scanResult = get && request == bcm::ScanResultRequest && bcm::supportsScanResultSize(outputSize, abi);
     const bool capabilities = get && request == bcm::CardCapabilitiesRequest &&
         outputSize == abi.capabilitySize;
     const bool associate = set && request == bcm::AssociateRequest;
@@ -352,7 +352,7 @@ IOReturn BCM80211UserClient::runCommand(IOExternalMethodArguments *arguments, si
             goto done;
         }
         if (scanResult) {
-            if (!bcm::expandScanResult(legacy.request, shadow, capacity, abi)) {
+            if (!bcm::expandScanResult(legacy.request, shadow, capacity, outputSize, abi)) {
                 result = kIOReturnOverrun;
                 goto done;
             }

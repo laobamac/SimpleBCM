@@ -20,7 +20,7 @@ import tempfile
 import zipfile
 from pathlib import Path
 
-from bootstrap import ROOT, validate_payloads
+from bootstrap import ROOT
 from embed import ALIASES, LABELS, OUTPUT, VERSION, parse
 from kernel_collection import KernelCollection
 from macho import Image
@@ -280,7 +280,8 @@ def fragment(optional=False):
             ('AirportBrcmFixup.kext/Contents/PlugIns/AirPortBrcmNIC_Injector.kext', '')]
     add = [dict(Arch='x86_64', BundlePath=path, Comment='SimpleBCM embedded stack' if exe == 'SimpleBCM' else 'User-supplied optional dependency',
                 Enabled=True, ExecutablePath='Contents/MacOS/' + exe if exe else '', PlistPath='Contents/Info.plist',
-                MinKernel='23.0.0', MaxKernel='25.99.99') for path, exe in entries]
+                MinKernel='23.0.0', MaxKernel='' if exe == 'SimpleBCM' else '25.99.99')
+           for path, exe in entries]
     return {'Kernel': {'Add': add, 'Block': []}}
 
 
@@ -351,7 +352,6 @@ def check_reference(folder, addresses, compatibility, far, labels):
 
 
 def verify(configuration, references):
-    validate_payloads()
     source_fingerprint = fingerprint()
     manifest = json.loads((OUTPUT / 'manifest.json').read_text())
     product = ROOT / f'build/DerivedData/Build/Products/{configuration}/SimpleBCM.kext'
@@ -445,7 +445,7 @@ def verify(configuration, references):
                              for name, target in zip(adapter['compatibilityImports'], adapter['compatibilityTargets'])}
             (temp / 'imports.bin').write_bytes(b''.join(struct.pack('<Q', current[name]) for name in manifest['nativeImports']) +
                                                b''.join(struct.pack('<Q', compatibility[name]) for name in adapter['compatibilityImports']))
-            labels = ['Legacy', 'AirPort' if profile['kernel'] == 25 else 'AirPortOriginal']
+            labels = ['Legacy', 'AirPort' if profile['kernel'] >= 25 else 'AirPortOriginal']
             for far in [False, True]:
                 output = subprocess.check_output([str(executable), str(temp / 'imports.bin'), str(temp),
                                                   str(int(far)), str(profile['kernel']), str(temp / 'native-link.bin')], text=True)
@@ -532,6 +532,7 @@ def package(configuration, channel='rel'):
             shutil.copy2(ROOT / filename, stage / filename)
         shutil.copy2(ROOT / '.research/OpenCore-Legacy-Patcher/LICENSE.txt', extra / 'OCLP-LICENSE.txt')
         shutil.copy2(ROOT / 'Tools/collect.py', extra / 'collect.py')
+        shutil.copy2(ROOT / 'Resources/GoldenGate/EAP8021X-APPLE_LICENSE', extra / 'EAP8021X-APPLE_LICENSE')
         (stage / 'Docs').mkdir()
         for document in (ROOT / 'Docs').glob('*.md'):
             shutil.copy2(document, stage / 'Docs' / document.name)

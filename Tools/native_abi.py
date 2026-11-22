@@ -258,7 +258,7 @@ class NativeModel:
             raise ValueError('Reference system kernel does not match its profile')
         if self.native.uuid != self.profile['skywalk']:
             raise ValueError('Reference Skywalk UUID does not match its profile')
-        self.airport_source = 'BrcmTahoe' if self.profile['kernel'] == 25 else 'BrcmOriginal'
+        self.airport_source = 'BrcmTahoe' if self.profile['kernel'] >= 25 else 'BrcmOriginal'
         self.images = {'Legacy': Mach(PATHS['Legacy']), 'BrcmTahoe': Mach(PATHS[self.airport_source])}
         self.old_tables = {}
         self.new_tables = {}
@@ -380,7 +380,7 @@ def verify_model(model):
         checks.append(name)
     require(model.native.uuid == model.profile['skywalk'], model.system + ' native UUID')
     require(len(model.tables) == 18, '18 class tables decoded')
-    for cls, old_size, native_size in [('IOSkywalkInterface', 184, 176), ('IOSkywalkNetworkInterface', 208, 224 if model.profile['kernel'] == 25 else 208), ('IOSkywalkEthernetInterface', 272, model.profile['ethernetSize']), ('IOSkywalkPacketBufferPool', 184, model.profile['poolSize']), ('IOSkywalkPacket', 120, 112), ('IOSkywalkNetworkPacket', 128, 120)]:
+    for cls, old_size, native_size in [('IOSkywalkInterface', 184, 176), ('IOSkywalkNetworkInterface', 208, 224 if model.profile['kernel'] >= 25 else 208), ('IOSkywalkEthernetInterface', 272, model.profile['ethernetSize']), ('IOSkywalkPacketBufferPool', 184, model.profile['poolSize']), ('IOSkywalkPacket', 120, 112), ('IOSkywalkNetworkPacket', 128, 120)]:
         require(class_size(model.old, cls) == old_size and class_size(model.native, cls) == native_size, cls + ' class sizes')
     cls = 'IOSkywalkEthernetInterface'
     require(len(model.new_tables[cls]) == model.profile['ethernetSlots'], 'Native Ethernet vtable length')
@@ -395,7 +395,7 @@ def verify_model(model):
     require(model.native.read(address + 38, 7) == b'\x48\x89\x83' + struct.pack('<I', offset), f'Native expansion pointer store at this+{offset:#x}')
     refs = model.imports()
     require(refs['Legacy']['oldSkywalkImports'] == 113 and refs['BrcmTahoe']['oldSkywalkImports'] == 148, 'Skywalk dependency counts')
-    counts = {23: (1, 2), 24: (2, 3), 25: (2, 4)}[model.profile['kernel']]
+    counts = {23: (1, 2), 24: (2, 3), 25: (2, 4), 27: (2, 4)}[model.profile['kernel']]
     require((len(refs['Legacy']['missingInNative']), len(refs['BrcmTahoe']['missingInNative'])) == counts, 'Skywalk missing-entry counts')
     layouts = model.layouts()
     for label, cls, parent in LEGACY_CLASSES:

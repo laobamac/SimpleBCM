@@ -14,6 +14,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		000000000000000000000220 /* EAPOLOverlay.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000221 /* EAPOLOverlay.cpp */; };
 		000000000000000000000096 /* SimpleBCM.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000064 /* SimpleBCM.cpp */; };
 		000000000000000000000097 /* Bridge.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000065 /* Bridge.cpp */; };
 		000000000000000000000098 /* UserClient.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000066 /* UserClient.cpp */; };
@@ -32,6 +33,8 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		000000000000000000000221 /* EAPOLOverlay.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = EAPOLOverlay.cpp; sourceTree = "<group>"; };
+		000000000000000000000222 /* EAPOLOverlay.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = EAPOLOverlay.hpp; sourceTree = "<group>"; };
 		000000000000000000000064 /* SimpleBCM.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = SimpleBCM.cpp; sourceTree = "<group>"; };
 		000000000000000000000065 /* Bridge.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = Bridge.cpp; sourceTree = "<group>"; };
 		000000000000000000000066 /* UserClient.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = UserClient.cpp; sourceTree = "<group>"; };
@@ -81,6 +84,8 @@
 				00000000000000000000007A /* Loader.cpp */,
 				00000000000000000000012C /* Relocate.cpp */,
 				00000000000000000000012D /* Patcher.cpp */,
+				000000000000000000000221 /* EAPOLOverlay.cpp */,
+				000000000000000000000222 /* EAPOLOverlay.hpp */,
 				000000000000000000000130 /* Loader.hpp */,
 				000000000000000000000131 /* Patcher.hpp */,
 				000000000000000000000132 /* Payload.hpp */,
@@ -189,6 +194,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				000000000000000000000096 /* SimpleBCM.cpp in Sources */,
+				000000000000000000000220 /* EAPOLOverlay.cpp in Sources */,
 				000000000000000000000097 /* Bridge.cpp in Sources */,
 				000000000000000000000098 /* UserClient.cpp in Sources */,
 				000000000000000000000099 /* Loader.cpp in Sources */,

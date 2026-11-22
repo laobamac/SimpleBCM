@@ -59,6 +59,7 @@ class SkywalkPlan:
         self.native = self.model.native
         self.legacy = self.model.images['Legacy']
         self.air = self.model.images['BrcmTahoe']
+        self.airport_payload_index = 2 if self.model.airport_source == 'BrcmTahoe' else 1
         self.wireless = Mach(self.native.path, 'com.apple.iokit.IO80211Family')
         if self.wireless.uuid != self.profile['wireless']:
             raise ValueError('Unsupported native IO80211Family')
@@ -345,7 +346,7 @@ class SkywalkPlan:
             'nativeSlotCount': len(self.model.new_tables['IOSkywalkEthernetInterface']),
             'ethernetLinkSymbol': self.link_symbol,
             'ethernetLinkSlot': self.link_slot,
-            'airPortPayloadIndex': 2 if self.profile['kernel'] == 25 else 1,
+            'airPortPayloadIndex': self.airport_payload_index,
             'classNamespace': self.namespace,
             'wirelessControllerIdentity': 'AirPortDriver',
             'userClientStrategy': 'native-class-with-delegated-control',
@@ -393,6 +394,11 @@ def prepare_native_guards(plans):
             '__ZNK25IOSkywalkPacketBufferPool13taggedReleaseEPKv',
             '__ZN25IOSkywalkNetworkInterface13willTerminateEP9IOServicej',
             '__ZN25IOSkywalkNetworkInterface17setRxFlowSteeringEjP31ifnet_traffic_descriptor_commonj',
+            '__ZN25IOSkywalkNetworkInterface17ipsecOffloadSAAddEP16ipsec_offload_saPy',
+            '__ZN25IOSkywalkNetworkInterface20ipsecOffloadSADeleteEy',
+            '__ZN25IOSkywalkNetworkInterface24ipsecOffloadSAAdvanceESNEyy',
+            '__ZN25IOSkywalkNetworkInterface21ipsecOffloadPolicyAddEP20ipsec_offload_policyPy',
+            '__ZN25IOSkywalkNetworkInterface24ipsecOffloadPolicyDeleteEy',
         }
         if any(method not in allowed for _, _, method in plan.unchecked_overrides):
             raise ValueError('Unrecognized native vtable override')
@@ -416,7 +422,7 @@ def prepare_native_guards(plans):
                 name = sorted(names)[0]
                 plan.link_references.append((offset, name))
                 imports.add(name)
-        if [name for _, name in plan.link_references] != [API_SYMBOLS[10]]:
+        if API_SYMBOLS[10] not in [name for _, name in plan.link_references]:
             raise ValueError('Logical-link wrapper must reference native Ethernet deregistration')
         plan.link_bytes, plan.link_mask = data, bytes(mask)
     return imports
@@ -427,6 +433,9 @@ def emit_system_profiles(plans, native_index):
     lines = []
     rows = []
     for index, plan in enumerate(plans):
+        universal = plan.profile['kernel'] != 27
+        if universal:
+            lines.append('#ifndef SIMPLEBCM_GOLDENGATE_ONLY')
         classes = []
         for number, (image, address, callbacks) in enumerate(plan.callbacks):
             name = f'system{index}Callbacks{number}'
@@ -449,10 +458,15 @@ def emit_system_profiles(plans, native_index):
             plan.emit_rows(lines, 'NativeCodeReference', refs, [(o, native_index[m]) for o, m in plan.link_references])
             pattern = '{' + f'{data},{mask},{len(plan.link_bytes)},{refs},{len(plan.link_references)}' + '}'
         fields = [str(profile['kernel']), json.dumps(plan.system), str(profile['ethernetSize']), str(profile['poolSize']),
-                  str(profile['ethernetSlots']), str(2 if profile['kernel'] == 25 else 1),
+                  str(profile['ethernetSlots']), str(plan.airport_payload_index),
                   str(plan.link_slot) + 'U', pattern, guards, str(len(plan.vtable_guards)),
                   sizes, str(len(plan.class_guards)), name]
-        rows.append('{' + ','.join(fields) + '}')
-    lines.append('const NativeSystemProfile nativeSystems[] = {' + ','.join(rows) + '};')
-    lines.append(f'const uint32_t nativeSystemCount = {len(plans)};')
+        if universal:
+            lines.append('#endif')
+            rows.append('#ifndef SIMPLEBCM_GOLDENGATE_ONLY')
+        rows.append('{' + ','.join(fields) + '},')
+        if universal:
+            rows.append('#endif')
+    lines += ['const NativeSystemProfile nativeSystems[] = {', *rows, '};',
+              'const uint32_t nativeSystemCount = sizeof(nativeSystems) / sizeof(nativeSystems[0]);']
     return lines

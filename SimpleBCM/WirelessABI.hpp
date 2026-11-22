@@ -64,8 +64,8 @@ constexpr size_t ScanIEOffset = 0x8C;
 constexpr size_t LegacyScanIECapacity = 0x400;
 
 enum class AirPortBackend : uint8_t { Original, Tahoe };
-enum class AssociateLayout : uint8_t { Legacy, Extended };
-enum class JoinEventPolicy : uint8_t { Passthrough, Sequoia, Tahoe };
+enum class AssociateLayout : uint8_t { Legacy, Extended, GoldenGate };
+enum class JoinEventPolicy : uint8_t { Passthrough, Sequoia, Tahoe, GoldenGate };
 enum class NetworkDataResult : uint8_t { Valid, Invalid, Unsupported };
 
 struct UserABI {
@@ -96,9 +96,18 @@ constexpr UserABI SequoiaABI {24, "Sequoia", 0x8D8, 19, 0x384, 0x1CC, 0,
 constexpr UserABI TahoeABI {25, "Tahoe", 0x8E0, 21, 0x38C, 0x1D4, 0x234,
     NativeScanMultipleSize, NativeRoamProfileSize, NativeDriverAvailableSize, 9,
     AirPortBackend::Tahoe, AssociateLayout::Extended, JoinEventPolicy::Tahoe, 0x6E8, true};
+constexpr UserABI GoldenGateABI {27, "GoldenGate", 0x8E8, 23, 0x290, 0x224, 0x234,
+    NativeScanMultipleSize, NativeRoamProfileSize, NativeDriverAvailableSize, 9,
+    AirPortBackend::Tahoe, AssociateLayout::GoldenGate, JoinEventPolicy::GoldenGate, 0x6E8, true};
 
 inline const UserABI *userABIForKernel(uint32_t kernel) {
-    return kernel == 23 ? &SonomaABI : kernel == 24 ? &SequoiaABI : kernel == 25 ? &TahoeABI : nullptr;
+    switch (kernel) {
+        case 23: return &SonomaABI;
+        case 24: return &SequoiaABI;
+        case 25: return &TahoeABI;
+        case 27: return &GoldenGateABI;
+        default: return nullptr;
+    }
 }
 
 inline size_t eventPayloadSize(uint32_t event, size_t length, const UserABI &abi) {
@@ -192,8 +201,12 @@ inline bool encodeScalarResult(Request &request, uint8_t *buffer, size_t capacit
     return true;
 }
 
+inline bool supportsScanResultSize(size_t size, const UserABI &abi) {
+    return size == abi.scanResultSize || (abi.kernel == GoldenGateABI.kernel && size == 0x8CC);
+}
+
 inline bool prepareScanResult(Request &request, uint8_t *buffer, size_t capacity, const UserABI &abi) {
-    if (!buffer || capacity < abi.scanResultSize || request.length != abi.scanResultSize)
+    if (!buffer || capacity < request.length || !supportsScanResultSize(request.length, abi))
         return false;
     uint16_t length = static_cast<uint16_t>(buffer[ScanIELengthOffset] |
                                           (uint16_t(buffer[ScanIELengthOffset + 1]) << 8));
@@ -205,12 +218,14 @@ inline bool prepareScanResult(Request &request, uint8_t *buffer, size_t capacity
     return true;
 }
 
-inline bool expandScanResult(Request &request, uint8_t *buffer, size_t capacity, const UserABI &abi) {
-    if (!buffer || capacity < abi.scanResultSize || request.length != LegacyScanResultSize)
+inline bool expandScanResult(Request &request, uint8_t *buffer, size_t capacity, size_t outputSize,
+                             const UserABI &abi) {
+    if (!buffer || capacity < outputSize || !supportsScanResultSize(outputSize, abi) ||
+        request.length != LegacyScanResultSize)
         return false;
-    for (size_t offset = LegacyScanResultSize; offset < abi.scanResultSize; ++offset)
+    for (size_t offset = LegacyScanResultSize; offset < outputSize; ++offset)
         buffer[offset] = 0;
-    request.length = static_cast<uint32_t>(abi.scanResultSize);
+    request.length = static_cast<uint32_t>(outputSize);
     return true;
 }
 
@@ -451,14 +466,17 @@ inline bool encodeJoinStatus(uint32_t status, uint32_t result, const uint8_t *bs
     for (size_t index = 0; index < abi.joinStatusSize; ++index)
         output[index] = 0;
     const bool sequoia = abi.joinEventPolicy == JoinEventPolicy::Sequoia;
-    writeUInt32(output + (sequoia ? 0x08 : 0x1B8), status);
-    writeUInt32(output + (sequoia ? 0x0C : 0x1BC), status);
+    const bool goldenGate = abi.joinEventPolicy == JoinEventPolicy::GoldenGate;
+    const size_t statusOffset = sequoia ? 0x08 : goldenGate ? 0x208 : 0x1B8;
+    const size_t bssidOffset = sequoia ? 0 : statusOffset + 0x14;
+    writeUInt32(output + statusOffset, status);
+    writeUInt32(output + statusOffset + 4, status);
     if (!sequoia) {
-        writeUInt32(output + 0x1C4, result);
-        writeUInt32(output + 0x1C8, 1);
+        writeUInt32(output + statusOffset + 0x0C, result);
+        writeUInt32(output + statusOffset + 0x10, 1);
     }
     for (size_t index = 0; index < bssidLength; ++index)
-        output[(sequoia ? 0 : 0x1CC) + index] = bssid[index];
+        output[bssidOffset + index] = bssid[index];
     return true;
 }
 
@@ -473,10 +491,16 @@ inline bool prepareAssociate(Request &request, uint8_t *buffer, size_t capacity,
     }
     const auto lower = readUInt32(buffer + 8);
     const auto upper = readUInt32(buffer + 12);
-    if (lower > UINT16_MAX || upper > UINT16_MAX || buffer[0x206] > 3)
+    const bool goldenGate = abi.associateLayout == AssociateLayout::GoldenGate;
+    const size_t bssidCount = goldenGate ? 0x202 : 0x206;
+    if (lower > UINT16_MAX || upper > UINT16_MAX || buffer[bssidCount] > 3)
         return false;
-    for (size_t offset = 0xC; offset < 0x215; ++offset)
+    const size_t prefixEnd = goldenGate ? 0x1F8 : 0x215;
+    for (size_t offset = 0xC; offset < prefixEnd; ++offset)
         buffer[offset] = buffer[offset + 4];
+    if (goldenGate)
+        for (size_t offset = prefixEnd; offset < 0x1FC; ++offset)
+            buffer[offset] = 0;
     buffer[6] = static_cast<uint8_t>(lower);
     buffer[7] = static_cast<uint8_t>(lower >> 8);
     buffer[8] = static_cast<uint8_t>(upper);
@@ -484,8 +508,9 @@ inline bool prepareAssociate(Request &request, uint8_t *buffer, size_t capacity,
     buffer[10] = buffer[11] = 0;
     for (size_t offset = 0x215; offset < 0x218; ++offset)
         buffer[offset] = 0;
+    const size_t scopeDelta = goldenGate ? 0x28 : 0x2C;
     for (size_t offset = 0x218; offset < LegacyAssociateSize; ++offset)
-        buffer[offset] = buffer[offset + 0x2C];
+        buffer[offset] = buffer[offset + scopeDelta];
     for (size_t offset = LegacyAssociateSize; offset < abi.associateSize; ++offset)
         buffer[offset] = 0;
     request.length = LegacyAssociateSize;

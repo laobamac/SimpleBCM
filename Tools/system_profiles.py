@@ -23,10 +23,14 @@ SYSTEMS = {
                 'skywalk': '70DFAA8E-E369-3417-B6FD-B19FB6D5D49B',
                 'wireless': '13D3592A-A6BE-35E7-984C-0ACD90A76356',
                 'ethernetSize': 272, 'poolSize': 184, 'ethernetSlots': 352},
-    'Tahoe': {'kernel': 25, 'version': '26.7.2', 'build': '25G332',
+    'Tahoe': {'kernel': 25, 'version': '26.7.3', 'build': '25G416',
               'skywalk': 'A6EDB8DB-175B-3A49-8919-5769FCDB6BED',
-              'wireless': '4C2B4969-2B92-3646-9512-C1769BE0F9A4',
+              'wireless': '33F057C9-BB1A-3FB7-8033-1FA2A0DD3601',
               'ethernetSize': 288, 'poolSize': 192, 'ethernetSlots': 353},
+    'GoldenGate': {'kernel': 27, 'version': '27.2', 'build': '26B123',
+                   'skywalk': 'BAC5AA66-9C9C-356A-AC86-A25F04A07E27',
+                   'wireless': 'FCFF2E2C-C353-3ED2-90CA-A7776A68E892',
+                   'ethernetSize': 288, 'poolSize': 192, 'ethernetSlots': 358},
 }
 
 
@@ -34,7 +38,8 @@ def system_volumes():
     found = {}
     reference_root = os.environ.get('SIMPLEBCM_REFERENCE_ROOT')
     candidates = ([Path(reference_root) / name for name in SYSTEMS] if reference_root else
-                  [Path('/'), Path('/Volumes/Macintosh HD 1'), Path('/Volumes/Macintosh HD 2')])
+                  [Path('/'), Path('/Volumes/Macintosh HD 1'), Path('/Volumes/Macintosh HD 2'),
+                   Path('/Volumes/macOS GoldenGate')])
     for volume in candidates:
         path = volume / 'System/Library/CoreServices/SystemVersion.plist'
         if not path.is_file():

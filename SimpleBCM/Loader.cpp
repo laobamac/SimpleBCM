@@ -156,7 +156,7 @@ bool preparePayloads() {
     if (prepared)
         return true;
     auto kernel = getKernelVersion();
-    if (kernel < 23 || kernel > 25)
+    if (!nativeSystemForKernel(kernel))
         return fail("UnsupportedKernel", "SimpleBCM", kernel);
     if (!validateNativeSkywalk())
         return fail("UnsupportedNativeSkywalk", "com.apple.iokit.IOSkywalkFamily");

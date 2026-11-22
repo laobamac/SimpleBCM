@@ -44,12 +44,21 @@ def load_reference(path):
 def reference_paths():
     source = os.environ.get('SIMPLEBCM_NATIVE_SOURCE', 'snapshot')
     if source == 'snapshot':
-        return {name: DIRECTORY / (name + '.json') for name in SYSTEMS}
+        paths = {name: DIRECTORY / (name + '.json') for name in SYSTEMS}
+        refresh = os.environ.get('SIMPLEBCM_NATIVE_REFRESH')
+        for name in SYSTEMS:
+            if name != refresh and paths[name].is_file():
+                continue
+            volume = system_volumes().get(name)
+            if volume is None:
+                raise ValueError(f'{name} reference system or snapshot is required')
+            paths[name] = volume / 'System/Library/KernelCollections/BootKernelExtensions.kc'
+        return paths
     if source != 'system':
         raise ValueError('SIMPLEBCM_NATIVE_SOURCE must be snapshot or system')
     volumes = system_volumes()
     if set(volumes) != set(SYSTEMS):
-        raise ValueError('All three reference system volumes are required for system mode')
+        raise ValueError('All reference system volumes are required for system mode')
     return {name: volumes[name] / 'System/Library/KernelCollections/BootKernelExtensions.kc' for name in SYSTEMS}
 
 
@@ -104,13 +113,17 @@ class ReferenceCollection:
         pass
 
 
-def export_references(binary):
+def export_references(binary, system=None):
     from embed import generate, OUTPUT
     from kernel_collection import KernelCollection
     from native_abi import NATIVE_CLASSES, table
     from native_payload import CLIENT_CLASSES, SkywalkPlan, prepare_native_guards
 
-    os.environ['SIMPLEBCM_NATIVE_SOURCE'] = 'system'
+    if system:
+        os.environ['SIMPLEBCM_NATIVE_SOURCE'] = 'snapshot'
+        os.environ['SIMPLEBCM_NATIVE_REFRESH'] = system
+    else:
+        os.environ['SIMPLEBCM_NATIVE_SOURCE'] = 'system'
     generate()
     manifest = json.loads((OUTPUT / 'manifest.json').read_text())
     required = set(manifest['nativeImports'])
@@ -118,8 +131,10 @@ def export_references(binary):
     plans = [SkywalkPlan(name) for name in SYSTEMS]
     prepare_native_guards(plans)
     DIRECTORY.mkdir(parents=True, exist_ok=True)
-    hashes = {}
+    hashes = (json.loads((DIRECTORY / 'manifest.json').read_text())['files'] if system else {})
     for plan in plans:
+        if system and plan.system != system:
+            continue
         collection = KernelCollection(plan.native.path)
         images = {}
         for identifier, image, classes in (
@@ -218,10 +233,11 @@ def export_references(binary):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('action', choices=('export', 'verify'))
+    parser.add_argument('--system', choices=SYSTEMS)
     parser.add_argument('--binary', type=Path, default=ROOT / 'build/DerivedData/Build/Products/Release/SimpleBCM.kext/Contents/MacOS/SimpleBCM')
     args = parser.parse_args()
     if args.action == 'export':
-        export_references(args.binary)
+        export_references(args.binary, args.system)
     for name in SYSTEMS:
         load_reference(DIRECTORY / (name + '.json'))
     print('Native ABI references verified: ' + ', '.join(SYSTEMS))

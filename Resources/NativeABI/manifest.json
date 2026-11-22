@@ -6,8 +6,9 @@
   "copyright": "Copyright \u00a9 2026 laobamac. All rights reserved.",
   "schemaVersion": 1,
   "files": {
-    "Sonoma.json": "7a8fe4b7b36ff67485eef3352cd13f6e2140f77ca65d48e8519543ac6db60877",
-    "Sequoia.json": "0e2311e735f1029a7f2957c8fcaa939561dc2ac14c58740be7ad552c4ba76ee1",
-    "Tahoe.json": "611b50f109954bb7eda873c40dccf7f6d3ff57a994a156ede9550d9ac9ce82cd"
+    "Sonoma.json": "eb6abfe85f93868409086e8578c542acfa3250c4a388b14db6904919983c2f77",
+    "Sequoia.json": "982440e4dfe0b524adf275bef350a042ef07ea6e089c7d3c86014ca2978ee19b",
+    "Tahoe.json": "4e651b0898f8b8c993b53b4df11c386f53d603d9fb52a007fb15d61d9b9d2f75",
+    "GoldenGate.json": "1dce72e97689a7fc8dc2b63b6b60caf2b54b6aa34b9adc7218b339573ccfa9ac"
   }
 }

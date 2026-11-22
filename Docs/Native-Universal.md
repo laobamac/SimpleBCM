@@ -16,7 +16,8 @@ SimpleBCM 在启动时按 Darwin 主版本选择配置，不以系统小版本�
 | --- | --- | --- | --- |
 | Sonoma 14.8.8 | 23J620 | 9F5908B5-BA4B-37E3-AC31-62E1D45F1589 | EC4BA672-6E08-3AD2-B882-01690A960FF4 |
 | Sequoia 15.8 | 24H23 | 70DFAA8E-E369-3417-B6FD-B19FB6D5D49B | 13D3592A-A6BE-35E7-984C-0ACD90A76356 |
-| Tahoe 26.7.2 | 25G332 | A6EDB8DB-175B-3A49-8919-5769FCDB6BED | 4C2B4969-2B92-3646-9512-C1769BE0F9A4 |
+| Tahoe 26.7.3 | 25G416 | A6EDB8DB-175B-3A49-8919-5769FCDB6BED | 33F057C9-BB1A-3FB7-8033-1FA2A0DD3601 |
+| GoldenGate 27.2 | 26B123 | BAC5AA66-9C9C-356A-AC86-A25F04A07E27 | FCFF2E2C-C353-3ED2-90CA-A7776A68E892 |
 
 以上版本和 UUID 用于固定构建参考，不是运行时白名单。`Resources/NativeABI` 保存从这些系统提取的符号、虚表及必要代码片段，构建时校验 SHA-256 后读取。配置源为 `Tools/system_profiles.py`，生成器为 `Tools/native_abi.py`、`Tools/native_payload.py` 和 `Tools/embed.py`。运行时通过元类与符号地址核对 15 个原生类和接口、包池、用户客户端的虚表布局。
 
@@ -75,3 +76,5 @@ Legacy 与原生 IO80211Family 的冲突元类在载荷 CString 中重命名，�
 载荷原件由 `Tools/bootstrap.py` 固定提交与 SHA-256。两种 AirPort 共用一份基础载荷和相同的重定位、符号及入口表，Tahoe 的差异以偏移、长度和替换字节保存。启动时仅在选中载荷的独立映射中恢复字节，差分边界检查通过后才写入，完整载荷校验通过后才重定位；基础载荷保持只读，不增加收发阶段的处理。
 
 生成阶段只改写构建目录内的映射副本，运行时修改限于自有载荷和实例虚表。`Tools/build.py` 检查载荷恢复、原生导出、继承虚表、重定位、转发调用约定和控制面编解码；完整构建环境见 [Build.md](Build.md)。
+
+`Tools/prepare_goldengate.py` regenerates the bundled EAPOL and AWDL resources from the matching GoldenGate system and KDK, Tahoe, and the pinned Apple source revisions.
