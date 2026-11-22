@@ -22,6 +22,8 @@ SimpleBCM restores Broadcom Wi-Fi on macOS Sonoma 14, Sequoia 15, Tahoe 26, and 
 
 ## Installation
 
+OpenCore only needs one `SimpleBCM.kext` entry. The kext includes the macOS 27 Wi-Fi authentication and AirDrop components. No system files or kernel collection rebuild are required.
+
 1. Place `SimpleBCM.kext` in `EFI/OC/Kexts`, replacing the previous version.
 2. Disable the separate Add entries for IOSkywalkFamily, IO80211FamilyLegacy and AirPortBrcmNIC.
 3. Merge the packaged `config.fragment.plist`, check with `ocvalidate`, then reboot.
@@ -32,7 +34,7 @@ If AirportBrcmFixup is needed, add Lilu, AirportBrcmFixup and AirPortBrcmNIC_Inj
 
 ## Boot arguments
 
-`sbcmdelay=X`: load embedded drivers `X` milliseconds after service startup; `sbcmdelay=10000` means 10 seconds. Supports all three systems. Omit it or use `0` for no delay. Payload preparation and registration still run early.
+`sbcmdelay=X`: load embedded drivers `X` milliseconds after service startup; `sbcmdelay=10000` means 10 seconds. Applies to all supported systems. Omit it or use `0` for no delay. Payload preparation and registration still run early.
 
 The following features are disabled by default and apply only to macOS Tahoe (Darwin 25). They can be enabled independently:
 

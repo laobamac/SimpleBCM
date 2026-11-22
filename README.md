@@ -22,6 +22,8 @@ SimpleBCM 通过 OpenCore 为 macOS Sonoma 14、Sequoia 15、Tahoe 26 和 Golden
 
 ## 安装
 
+OpenCore 只需添加一个 `SimpleBCM.kext`。macOS 27 的 Wi-Fi 认证和隔空投送组件已内置，无需安装系统文件或重建内核集合。
+
 1. 将 `SimpleBCM.kext` 放入 `EFI/OC/Kexts`，替换旧版本。
 2. 禁用 IOSkywalkFamily、IO80211FamilyLegacy、AirPortBrcmNIC 的独立 Add 项。
 3. 合入包内 `config.fragment.plist`，用 `ocvalidate` 检查后重启。
@@ -32,7 +34,7 @@ SimpleBCM 通过 OpenCore 为 macOS Sonoma 14、Sequoia 15、Tahoe 26 和 Golden
 
 ## 启动参数
 
-`sbcmdelay=X`：服务启动后延迟 `X` 毫秒加载内嵌驱动，如 `sbcmdelay=10000` 为 10 秒。支持三套系统，不设置或设为 `0` 时不延迟。载荷准备和注册仍在早期完成。
+`sbcmdelay=X`：服务启动后延迟 `X` 毫秒加载内嵌驱动，如 `sbcmdelay=10000` 为 10 秒。支持上述系统，不设置或设为 `0` 时不延迟。载荷准备和注册仍在早期完成。
 
 以下功能默认关闭，仅在 macOS Tahoe（Darwin 25）生效，可分别启用：
 
