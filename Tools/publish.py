@@ -35,22 +35,24 @@ def prerelease_body(repository, commits):
 
 
 def release_body():
-    return '''一个 SimpleBCM.kext 支持 macOS Sonoma、Sequoia、Tahoe 和 GoldenGate，通过 OpenCore 注入恢复 Broadcom Wi-Fi，使用系统原生 Skywalk，无需修改系统卷。
+    return '''一个 `SimpleBCM.kext` 通过 OpenCore 在 macOS Sonoma、Sequoia、Tahoe 和 GoldenGate 上恢复 Broadcom Wi-Fi，使用系统原生 Skywalk，无需修改系统卷。
 
-- 内置 Legacy 和两个 AirPort 载荷，每次启动只加载 Legacy 与当前系统对应的 AirPort；不含旧 Skywalk 驱动。
+- 新增 macOS 27 GoldenGate 支持，恢复 Wi-Fi 扫描、连接和隔空投送双向发现。Wi-Fi 认证组件和 Intel 版 AWDL 插件内置于同一个 kext，启动时从内存加载。
+- 修复互联网共享的 WPA2 热点启动和客户端连接、热点活动时的地址维护，以及关闭热点后的 AWDL 恢复。修复 IBSS 配置转换。
+- 修复部分 CN 地区修订在 5 GHz 低频段的 80 MHz 功率记录。Tahoe 的 AWDL 信道共存和 DMA 优化可分别启用。可用 `sbcmdelay` 设置驱动加载延时。
 - **删除或禁用 IOSkywalkFamily 的 Block/Exclude 规则，保持原生 IOSkywalkFamily 和 IO80211Family 启用。** 禁用独立的旧驱动注入项，使用包内配置片段。
-- 支持 Sonoma 14、Sequoia 15、Tahoe 26 和 GoldenGate 27 的 x86_64 系统，不限制小版本。
-- 提供 DEBUG 和 RELEASE 包，日常使用请选择 RELEASE 包。AirportBrcmFixup 仍由需要的用户自行加载。
+- 支持 x86_64 的 Sonoma 14、Sequoia 15、Tahoe 26 和 GoldenGate 27。日常使用请选择 **RELEASE**，排查问题请选择 **DEBUG**。
 
 <details>
 <summary>English</summary>
 
-One SimpleBCM.kext supports macOS Sonoma, Sequoia, Tahoe and GoldenGate with native Skywalk through OpenCore injection, without modifying the system volume.
+One `SimpleBCM.kext` restores Broadcom Wi-Fi on macOS Sonoma, Sequoia, Tahoe, and GoldenGate through OpenCore injection. It uses native Skywalk and requires no system volume changes.
 
-- Legacy and two AirPort variants are embedded; each boot loads only Legacy and its selected AirPort backend. Old Skywalk code is not included.
-- **Remove or disable IOSkywalkFamily Block/Exclude rules. Keep native IOSkywalkFamily and IO80211Family enabled.** Disable separately injected old drivers and use the supplied configuration fragment.
-- Supports x86_64 Sonoma 14, Sequoia 15 and Tahoe 26 and GoldenGate 27 without restricting minor versions.
-- DEBUG and RELEASE packages are available. Choose RELEASE for everyday use. Supply AirportBrcmFixup separately if needed.
+- Adds macOS 27 GoldenGate support for Wi-Fi scanning, connections, and two-way AirDrop discovery. The kext supplies the Wi-Fi authentication components and the Intel AWDL plug-in from memory at startup.
+- Fixes WPA2 hotspot startup and client connections in Internet Sharing, address handling while a hotspot is active, and AWDL recovery after the hotspot stops. Fixes IBSS configuration conversion.
+- Restores 80 MHz transmit power records for affected CN country revisions on lower 5 GHz channels. Tahoe AWDL channel coexistence and DMA optimizations are individually optional. Use `sbcmdelay` to set a driver loading delay.
+- **Remove or disable IOSkywalkFamily Block/Exclude rules. Keep native IOSkywalkFamily and IO80211Family enabled.** Disable separately injected legacy drivers and use the supplied configuration fragment.
+- Supports x86_64 Sonoma 14, Sequoia 15, Tahoe 26, and GoldenGate 27. Choose **RELEASE** for daily use or **DEBUG** for troubleshooting.
 
 </details>'''
 
